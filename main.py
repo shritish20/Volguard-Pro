@@ -1232,7 +1232,7 @@ if st.session_state.logged_in and access_token:
                 st.markdown(f"**Max Loss:** ₹{updated_detail['max_loss']:.2f}" if updated_detail['max_loss'] != float('inf') else "**Max Loss:** Unlimited")
                 st.markdown("#### Individual Legs (for 1 lot):")
                 order_df = pd.DataFrame() 
-                    {"Instrument": order["instrument_key"],
+                     "Instrument": order["instrument_key"],
                      "Type": order["transaction_type"],
                      "Quantity (per lot)": config["lot_size"],
                      "LTP": order.get("current_price", 0)} for order in updated_detail["orders"]st.dataframe(
