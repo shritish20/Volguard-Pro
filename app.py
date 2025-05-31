@@ -958,7 +958,7 @@ if st.session_state.data_loaded and st.session_state.access_token:
             {"label": "IV Skew Slope", "value": f"{iv_skew_slope:.4f}", "color": "#28a745"}
         ]
         for i, metric in enumerate(metrics):
-            col = cols[i % 4]
+            col = cols[i % len(cols)]
             col.markdown(f"""
                 <div class="metric-card">
                     <div class="metric-label">{metric['label']}</div>
