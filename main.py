@@ -1416,15 +1416,15 @@ if st.session_state.logged_in and access_token:
         with col_r4:
             margin_pct = (funds_data["used_margin"] / funds_data["total_funds"] * 100) if funds_data["total_funds"] > 0 else 0
             st.markdown(
-                f"<div class='metric-box'><h3>💸 Margin Utilization</h3><div class='value'>{margin_pct:.2f}%</div>",
+                f"<div class='metric-box'><h3>💸 Margin Utilization</h3><div class='value'>{margin_pct:.2f}%</div></div>",
                 unsafe_allow_html=True,
             )
         st.subheader("Greeks Exposure")
         total_delta, total_theta, total_vega, total_gamma = 0.0, 0.0, 0.0, 0.0
         for pos in positions:
             try:
-                instrument_key = pos.get("instrument_key", "")
-                greeks = = get_option_greeks(config, [instrument_key]).get(instrument_key, {})
+                instrument_key = pos.get("instrument_token", "")
+                greeks = get_option_greeks(config, [instrument_key]).get(instrument_key, {})
                 total_delta += greeks.get("delta", 0) * pos.get("quantity", 0)
                 total_theta += greeks.get("theta", 0) * pos.get("quantity", 0)
                 total_vega += greeks.get("vega", 0) * pos.get("quantity", 0)
@@ -1445,7 +1445,7 @@ if st.session_state.logged_in and access_token:
             )
         with col_g3:
             st.markdown(
-                f"<div class='small-metric-box'><h4>🌪️ Vega</h4>₹{total_vega:.4f}</div>",
+                f"<div class='small-metric-box'><h4>🌪️ Vega</h4>₹{total_vega:.2f}</div>",
                 unsafe_allow_html=True,
             )
             if total_vega > 1000:
@@ -1468,19 +1468,23 @@ if st.session_state.logged_in and access_token:
             pos_df = pos_df[["instrument_token", "quantity", "average_price", "pnl"]]
             pos_df.columns = ["Instrument", "Quantity", "Avg Price", "P&L"]
             st.dataframe(
-                pos_df.style.format({"%.2f"}).set_properties(
-                    {"background-color": "#1A1C24", "color": "white"}
+                pos_df.style.format({
+                    "Avg Price": "{:.2f}",
+                    "P&L": "{:.2f}",
+                    "Quantity": "{:.0f}"
+                }).set_properties(
+                    **{"background-color": "#1A1C24", "color": "white"}
                 ),
                 use_container_width=True,
             )
         else:
             st.info("No open positions.")
         st.subheader("Risk Actions")
-        if st.button("Exit All Positions", key="exit_all_positions"):
+        if st.button("Exit All Positions", key="exit_all"):
             if st.checkbox("Confirm Exit All Positions", key="confirm_exit_all"):
                 order_ids = exit_all_positions(config)
                 if order_ids:
-                    st.success(f"Initiated {exit for} {len(order_ids)} positions.")
+                    st.success(f"Initiated exit for {len(order_ids)} positions.")
                 else:
                     st.warning("No positions to exit or error occurred.")
         st.subheader("Margin Utilization")
