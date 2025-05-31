@@ -276,11 +276,7 @@ def market_metrics(option_chain, expiry_date):
         days_to_expiry = (expiry_dt - datetime.now()).days
         call_oi = sum(opt["call_options"]["market_data"]["oi"] for opt in option_chain)
         put_oi = sum(opt["put_options"]["market_data"]["oi"] for opt in option_chain)
-        if call_oi == 0:
-            st.warning("Call OI is zero, PCR calculation may be unreliable.")
-            pcr = 0
-        else:
-            pcr = put_oi / call_oi
+        pcr = put_oi / call_oi if call_oi != 0 else 0
         max_pain = max(range(int(min(opt["strike_price"] for opt in option_chain)),
                             int(max(opt["strike_price"] for opt in option_chain)) + 1, 50),
                        key=lambda strike: sum(max(0, strike - opt["strike_price"]) * opt["call_options"]["market_data"]["oi"] +
@@ -553,12 +549,14 @@ def place_order(config, instrument_key, quantity, transaction_type, order_type="
         if res.status_code == 200:
             data = res.json()
             if data.get("status") == "success":
-                order_id = data.get("data", {}).get("order_id")
-                if order_id:
-                    return order_id
+                order_data = data.get("data", {})
+                if "order_ids" in order_data and order_data["order_ids"]:
+                    return order_data["order_ids"][0]
+                elif "order_id" in order_data:
+                    return order_data["order_id"]
                 st.error(f"Unexpected response format: {data}")
                 return None
-            st.error(f"Order rejected: {data.get('data', {}).get('message', 'Unknown error')}")
+            st.error(f"Unexpected response status: {data}")
             return None
         elif res.status_code == 400:
             data = res.json()
@@ -582,9 +580,7 @@ def get_option_greeks(config, instrument_keys):
         params = {"instrument_key": ",".join(instrument_keys)}
         res = requests.get(url, headers=config['headers'], params=params, timeout=5)
         if res.status_code == 200:
-            data = res.json()["data"]
-            greeks = {item["instrument_key"]: item for item in data}
-            return greeks
+            return res.json()["data"]
         st.error(f"Failed to fetch Greeks: {res.status_code} - {res.text}")
         return {}
     except Exception as e:
@@ -703,50 +699,21 @@ def calendar_spread(option_chain, spot_price, config, lots=1):
     strike = atm["strike_price"]
     ce_short_opt = find_option_by_strike(option_chain, strike, "CE")
     if not ce_short_opt:
-        st.error("Missing short option for Calendar Spread")
+        st.error("Missing options for Calendar Spread")
         return None
-    # Fetch next expiry for long leg
-    try:
-        url = f"{config['base_url']}/option/contract"
-        params = {"instrument_key": config['instrument_key']}
-        res = requests.get(url, headers=config['headers'], params=params, timeout=5)
-        res.raise_for_status()
-        expiries = sorted(res.json()["data"], key=lambda x: datetime.strptime(x["expiry"], "%Y-%m-%d"))
-        current_expiry = datetime.strptime(config['expiry_date'], "%Y-%m-%d")
-        next_expiry = None
-        for expiry in expiries:
-            expiry_dt = datetime.strptime(expiry["expiry"], "%Y-%m-%d")
-            if expiry_dt > current_expiry:
-                next_expiry = expiry["expiry"]
-                break
-        if not next_expiry:
-            st.error("No next expiry found for Calendar Spread")
-            return None
-        # Fetch option chain for next expiry
-        url = f"{config['base_url']}/option/chain"
-        params = {"instrument_key": config['instrument_key'], "expiry_date": next_expiry}
-        res = requests.get(url, headers=config['headers'], params=params, timeout=5)
-        res.raise_for_status()
-        next_option_chain = res.json()["data"]
-        ce_long_opt = find_option_by_strike(next_option_chain, strike, "CE")
-        if not ce_long_opt:
-            st.error("Missing long option for Calendar Spread")
-            return None
-        instrument_keys = [ce_short_opt["instrument_key"], ce_long_opt["instrument_key"]]
-        greeks = get_option_greeks(config, instrument_keys)
-        ce_short_price = greeks.get(ce_short_opt["instrument_key"], {}).get("last_price", ce_short_opt["market_data"]["ltp"])
-        ce_long_price = greeks.get(ce_long_opt["instrument_key"], {}).get("last_price", ce_long_opt["market_data"]["ltp"])
-        premium = (ce_short_price - ce_long_price) * config["lot_size"] * lots
-        max_loss = premium
-        orders = [
-            {"instrument_key": ce_short_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "SELL"},
-            {"instrument_key": ce_long_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "BUY"}
-        ]
-        return {"strategy": "Calendar Spread", "strikes": [strike, strike],
-                "premium": premium, "max_loss": max_loss, "max_profit": float("inf"), "orders": orders}
-    except Exception as e:
-        st.error(f"Failed to fetch next expiry for Calendar Spread: {e}")
-        return None
+    ce_long_opt = ce_short_opt
+    instrument_keys = [ce_short_opt["instrument_key"]]
+    greeks = get_option_greeks(config, instrument_keys)
+    ce_short_price = greeks.get(ce_short_opt["instrument_key"], {}).get("last_price", ce_short_opt["market_data"]["ltp"])
+    ce_long_price = ce_short_price
+    premium = 0
+    max_loss = premium
+    orders = [
+        {"instrument_key": ce_short_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "SELL"},
+        {"instrument_key": ce_long_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "BUY"}
+    ]
+    return {"strategy": "Calendar Spread", "strikes": [strike, strike],
+            "premium": premium, "max_loss": max_loss, "max_profit": float("inf"), "orders": orders}
 
 def bull_put_spread(option_chain, spot_price, config, lots=1):
     atm = min(option_chain, key=lambda x: abs(x["strike_price"] - spot_price))
@@ -853,21 +820,21 @@ def plot_chain_analysis(full_chain_df):
     fig4.update_layout(title="Total OI", xaxis_title="Strike", yaxis_title="OI", template="plotly_dark", height=300, paper_bgcolor="#1a1f2b", plot_bgcolor="#1a1f2b", font=dict(color="#e6e9ef"))
     
     return [fig1, fig3, fig2]
-
+    
 def plot_payoff_diagram(strategy_details, spot_price, config):
     fig = go.Figure()
     strikes = np.linspace(spot_price - 50, spot_price + 50, 100)
     for detail in strategy_details:
         try:
             payoffs = np.zeros_like(strikes)
-            for idx, order in enumerate(detail["orders"]):
-                instrument_key = order["instrument_key"]
-                qty = order["quantity"]
-                is_buy = order["transaction_type"] == "BUY"
-                multiplier = 1 if is_buy else -1
-                strike = detail["strikes"][idx]
-                is_call = "CE" in instrument_key
-                price = detail["pricing"].get(instrument_key, {}).get("last_price", 0)
+            for order in range(len(detail["orders"])):
+                instrument = detail["orders"][order]["instrument_key"]
+                qty = detail["orders"][order]["quantity"]
+                is_buy = detail["orders"][order]["transaction_type"] == "BUY"
+                multiplier = 1 if is_buy == 1 else -1
+                strike = detail["strikes"][order]
+                is_call = "CE" in instrument
+                price = detail["pricing"].get(instrument, {}).get("last_price", 0)
                 if is_call:
                     payoff = multiplier * (np.maximum(0, strikes - strike) - price)
                 else:
@@ -969,6 +936,7 @@ if st.session_state.data_loaded and st.session_state.access_token:
     with tab1:
         st.header("Market Overview")
         st.subheader("Key Metrics")
+        col1, col2, col3, col4 = st.columns(4)
         metrics = [
             {"label": "Spot Price", "value": f"₹{spot_price:.0f}", "color": "#28a745"},
             {"label": "ATM Strike", "value": f"{seller['strike']:.0f}", "color": "#28a745"},
@@ -989,15 +957,14 @@ if st.session_state.data_loaded and st.session_state.access_token:
             {"label": "Max Pain", "value": f"{market['max_pain']:.0f}", "color": "#28a745"},
             {"label": "IV Skew Slope", "value": f"{iv_skew_slope:.4f}", "color": "#28a745"}
         ]
-        for i in range(0, len(metrics), 4):
-            cols = st.columns(4)
-            for j, metric in enumerate(metrics[i:i+4]):
-                cols[j].markdown(f"""
-                    <div class="metric-card">
-                        <div class="metric-label">{metric['label']}</div>
-                        <div class="metric-value" style="color: {metric['color']}">{metric['value']}</div>
-                    </div>
-                """, unsafe_allow_html=True)
+        for i, metric in enumerate(metrics):
+            col = cols[i % 4]
+            col.markdown(f"""
+                <div class="metric-card">
+                    <div class="metric-label">{metric['label']}</div>
+                    <div class="metric-value" style="color: {metric['color']}">{metric['value']}</div>
+                </div>
+            """, unsafe_allow_html=True)
         st.subheader("Volatility Analysis")
         st.plotly_chart(plot_vol_comparison(seller, hv_7, garch_7d), use_container_width=True)
         st.subheader("Portfolio Summary")
@@ -1013,15 +980,15 @@ if st.session_state.data_loaded and st.session_state.access_token:
             {"label": "Drawdown %", "value": f"{portfolio_summary['Drawdown %']:.2f}%", "color": "#dc3545" if portfolio_summary['Drawdown %'] > 0 else "#28a745"},
             {"label": "Portfolio Vega", "value": f"{portfolio_summary['Portfolio Vega']:.2f}", "color": "#28a745"}
         ]
-        for i in range(0, len(portfolio_metrics), 3):
-            cols = st.columns(3)
-            for j, metric in enumerate(portfolio_metrics[i:i+3]):
-                cols[j].markdown(f"""
-                    <div class="metric-card">
-                        <div class="metric-label">{metric['label']}</div>
-                        <div class="metric-value" style="color: {metric['color']}">{metric['value']}</div>
-                    </div>
-                """, unsafe_allow_html=True)
+        cols = st.columns(3)
+        for i, metric in enumerate(portfolio_metrics):
+            col = cols[i % 3]
+            col.markdown(f"""
+                <div class="metric-card">
+                    <div class="metric-label">{metric['label']}</div>
+                    <div class="metric-value" style="color: {metric['color']}">{metric['value']}</div>
+                </div>
+            """, unsafe_allow_html=True)
         if portfolio_summary.get("Flags"):
             st.warning("🚨 Risk Alerts:")
             for flag in portfolio_summary["Flags"]:
@@ -1053,7 +1020,7 @@ if st.session_state.data_loaded and st.session_state.access_token:
     with tab2:
         st.header("Option Chain Analysis")
         st.subheader("ATM ±300 Chain")
-        st.dataframe(full_chain_df.style.set_properties(**{
+        st.dataframe(full_chain_df, style=lambda x: x.style.set_properties(**{
             'background-color': '#2c3344',
             'color': '#ffffff',
             'border-color': '#28a745',
@@ -1075,7 +1042,7 @@ if st.session_state.data_loaded and st.session_state.access_token:
         eff_df["Theta/Vega"] = eff_df["Total Theta"] / eff_df["Total Vega"]
         eff_df = eff_df[["Strike", "Total Theta", "Total Vega", "Theta/Vega"]].sort_values("Theta/Vega", ascending=False)
         st.subheader("Theta/Vega Ranking")
-        st.dataframe(eff_df.style.set_properties(**{
+        st.dataframe(eff_df, style=lambda x: x.style.set_properties(**{
             'background-color': '#2c3344',
             'color': '#ffffff',
             'border-color': '#28a745',
@@ -1102,18 +1069,9 @@ if st.session_state.data_loaded and st.session_state.access_token:
         if not event_df.empty:
             # Format event_df to handle non-numeric values
             event_df_display = event_df.copy()
-            def format_value(x):
-                if pd.isna(x):
-                    return ''
-                try:
-                    if isinstance(x, str) and '%' in x:
-                        return f"{float(x.strip('%')):.2f}%"
-                    return str(x)
-                except:
-                    return str(x)
-            event_df_display['Forecast'] = event_df_display['Forecast'].apply(format_value)
-            event_df_display['Prior'] = event_df_display['Prior'].apply(format_value)
-            st.dataframe(event_df_display.style.set_properties(**{
+            event_df_display['Forecast'] = event_df_display['Forecast'].apply(lambda x: f"{float(x.strip('%')):.2f}" if isinstance(x, str) and '%' in x else x if pd.notnull(x) else '')
+            event_df_display['Prior'] = event_df_display['Prior'].apply(lambda x: f"{float(x.strip('%')):.2f}" if isinstance(x, str) and '%' in x else x if pd.notnull(x) else '')
+            st.dataframe(event_df_display, style=lambda x: x.style.set_properties(**{
                 'background-color': '#2c3344',
                 'color': '#ffffff',
                 'border-color': '#28a745',
@@ -1154,12 +1112,12 @@ if st.session_state.data_loaded and st.session_state.access_token:
                     <strong>Strikes:</strong> {detail['strikes']}<br>
                     <strong>Premium:</strong> ₹{detail['premium']:.2f}<br>
                     <strong>Max Profit:</strong> ₹{detail['max_profit']:.2f}<br>
-                    <strong>Max Loss:</strong> {'₹' + str(detail['max_loss']) if detail['max_loss'] != float('inf') else 'Unlimited'}
+                    <strong>Max Loss:</strong> {'₹' if detail['max_loss'] != float('inf') else 'Unlimited'}
                 """, unsafe_allow_html=True)
         st.subheader("Payoff Diagram")
         st.plotly_chart(plot_payoff_diagram(strategy_details, spot_price, config), use_container_width=True)
         st.subheader("Execute Strategy")
-        strategy_options = [detail['strategy'] for detail in strategy_details]
+        strategy_options = [detail['strategy"] for detail in strategy_details]
         strategy_choice = st.selectbox("Choose Strategy", strategy_options)
         lots = st.number_input("Number of Lots", min_value=1, max_value=50, value=1)
         if st.button("Execute Order"):
@@ -1183,8 +1141,8 @@ if st.session_state.data_loaded and st.session_state.access_token:
                         st.error(f"All orders failed for {strategy_choice}.")
                     break
         st.subheader("Risk Summary")
-        st.dataframe(strategy_df.style.set_properties(**{
-            'background-color': '#2c3344',
+        st.dataframe(strategy_df, style=lambda x: x.style.set_properties(**{
+            'background-color': '#2c3f44',
             'color': '#ffffff',
             'border-color': '#28a745',
             'text-align': 'center'
@@ -1206,3 +1164,8 @@ if st.session_state.data_loaded and st.session_state.access_token:
 
 else:
     st.info("Enter your Upstox API access token in the sidebar and click 'Fetch Data' to begin.")
+
+
+This is my streamlit code there seems to lotabof error can you just fine and fix it  and provide me 100% copy paste ready code??
+
+And please don't modify anything like I want everything to be same only find the error and correct it, am I clear 
