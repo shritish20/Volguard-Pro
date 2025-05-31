@@ -933,7 +933,7 @@ if st.session_state.data_loaded and st.session_state.access_token:
     # Tabs for dashboard sections
     tab1, tab2, tab3, tab4 = st.tabs(["Market Overview", "Option Chain", "Events & Regime", "Strategies & Orders"])
 
-        with tab1:
+    with tab1:
         st.header("Market Overview")
         st.subheader("Key Metrics")
         cols_metrics = st.columns(4) # Changed variable name to avoid confusion with portfolio_metrics columns
