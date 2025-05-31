@@ -1165,7 +1165,3 @@ if st.session_state.data_loaded and st.session_state.access_token:
 else:
     st.info("Enter your Upstox API access token in the sidebar and click 'Fetch Data' to begin.")
 
-
-This is my streamlit code there seems to lotabof error can you just fine and fix it  and provide me 100% copy paste ready code??
-
-And please don't modify anything like I want everything to be same only find the error and correct it, am I clear 
