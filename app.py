@@ -1117,7 +1117,7 @@ if st.session_state.data_loaded and st.session_state.access_token:
         st.subheader("Payoff Diagram")
         st.plotly_chart(plot_payoff_diagram(strategy_details, spot_price, config), use_container_width=True)
         st.subheader("Execute Strategy")
-        strategy_options = [detail['strategy"] for detail in strategy_details]
+        strategy_options = [detail["strategy"] for detail in strategy_details]
         strategy_choice = st.selectbox("Choose Strategy", strategy_options)
         lots = st.number_input("Number of Lots", min_value=1, max_value=50, value=1)
         if st.button("Execute Order"):
