@@ -18,62 +18,82 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for a professional, high-contrast, dark-themed look
+# Custom CSS for a professional, trading-focused, dark-themed look
 st.markdown("""
     <style>
-    .main {background-color: #1c2526; color: #e0e0e0;}
-    .sidebar .sidebar-content {background-color: #2c3e50; color: #ffffff;}
+    .main {background-color: #1a1f2b; color: #e6e9ef;}
+    .sidebar .sidebar-content {background-color: #252b3a; color: #ffffff;}
     .stButton>button {
-        background-color: #3498db;
+        background-color: #28a745;
         color: white;
-        border-radius: 8px;
+        border-radius: 6px;
         font-weight: bold;
-        padding: 8px 16px;
+        padding: 10px 20px;
+        border: none;
+        transition: background-color 0.3s;
     }
     .stButton>button:hover {
-        background-color: #2980b9;
+        background-color: #218838;
         color: #ffffff;
     }
     .stTextInput>div>input {
-        background-color: #34495e;
+        background-color: #2c3344;
         color: #ffffff;
-        border-radius: 8px;
-        border: 1px solid #3498db;
+        border-radius: 6px;
+        border: 1px solid #28a745;
+        padding: 8px;
     }
-    h1, h2, h3, h4 {color: #ffffff; font-family: 'Arial', sans-serif;}
-    .stMetric {
-        background-color: #2c3e50;
+    h1, h2, h3, h4 {color: #ffffff; font-family: 'Helvetica Neue', sans-serif;}
+    .metric-card {
+        background-color: #252b3a;
         border-radius: 8px;
         padding: 15px;
         color: #ffffff;
-        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        text-align: center;
+        margin-bottom: 10px;
     }
+    .metric-card .metric-label {font-size: 14px; color: #a3bffa;}
+    .metric-card .metric-value {font-size: 18px; font-weight: bold; color: #ffffff;}
     .stTabs [data-baseweb="tab"] {
         font-size: 16px;
         font-weight: bold;
         color: #ffffff;
-        background-color: #34495e;
-        border-radius: 8px 8px 0 0;
+        background-color: #2c3344;
+        border-radius: 6px 6px 0 0;
+        padding: 10px 20px;
+        margin-right: 5px;
     }
     .stTabs [data-baseweb="tab"]:hover {
-        background-color: #3498db;
+        background-color: #28a745;
         color: #ffffff;
     }
     .stDataFrame {
-        background-color: #2c3e50;
+        background-color: #252b3a;
         border-radius: 8px;
         color: #ffffff;
     }
     .stDataFrame table {
-        background-color: #34495e;
+        background-color: #2c3344;
         color: #ffffff;
-        border: 1px solid #3498db;
+        border-collapse: collapse;
+        width: 100%;
     }
     .stDataFrame th, .stDataFrame td {
         color: #ffffff;
-        border: 1px solid #3498db;
+        border: 1px solid #28a745;
+        padding: 8px;
+        text-align: center;
     }
-    .st-expander {background-color: #34495e; color: #ffffff; border-radius: 8px;}
+    .stDataFrame tr:hover {background-color: #3a4257;}
+    .st-expander {background-color: #2c3344; color: #ffffff; border-radius: 8px;}
+    .footer {
+        text-align: center;
+        color: #a3bffa;
+        font-size: 14px;
+        margin-top: 20px;
+        padding: 10px;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -89,6 +109,7 @@ if 'option_chain' not in st.session_state:
 
 # Sidebar
 with st.sidebar:
+    # Replace with your actual logo URL when hosted
     st.image("https://via.placeholder.com/150x50.png?text=Volguard+Pro", use_column_width=True)
     st.header("Volguard Pro - Your Trading Copilot")
     st.session_state.access_token = st.text_input("Enter Upstox API Access Token", type="password")
@@ -344,8 +365,8 @@ def suggest_strategy(regime_label, ivp, iv_minus_rv, days_to_expiry, event_df, e
             high_impact_event_near = True
         if level == "High" and pd.notnull(row["Forecast"]) and pd.notnull(row["Prior"]):
             try:
-                forecast = float(row["Forecast"].strip("%")) if "%" in str(row["Forecast"]) else float(row["Forecast"])
-                prior = float(row["Prior"].strip("%")) if "%" in str(row["Prior"]) else float(row["Prior"])
+                forecast = float(str(row["Forecast"]).strip("%")) if "%" in str(row["Forecast"]) else float(row["Forecast"])
+                prior = float(str(row["Prior"]).strip("%")) if "%" in str(row["Prior"]) else float(row["Prior"])
                 if abs(forecast - prior) > 0.5:
                     event_impact_score += 1
             except:
@@ -762,64 +783,78 @@ def atm_strangle(option_chain, spot_price, config, lots=1):
 
 def plot_vol_comparison(seller, hv_7, garch_7d):
     fig = go.Figure(data=[
-        go.Bar(name='ATM IV', x=['ATM IV'], y=[seller["avg_iv"]], marker_color='#3498db'),
-        go.Bar(name='Realized Vol (7D)', x=['Realized Vol (7D)'], y=[hv_7], marker_color='#2ecc71'),
-        go.Bar(name='GARCH Vol (7D)', x=['GARCH Vol (7D)'], y=[garch_7d], marker_color='#e74c3c')
+        go.Bar(name='ATM IV', x=['ATM IV'], y=[seller["avg_iv"]], marker_color='#28a745'),
+        go.Bar(name='Realized Vol (7D)', x=['Realized Vol (7D)'], y=[hv_7], marker_color='#ffc107'),
+        go.Bar(name='GARCH Vol (7D)', x=['GARCH Vol (7D)'], y=[garch_7d], marker_color='#dc3545')
     ])
     fig.update_layout(
-        title="Volatility Comparison: IV vs RV vs GARCH",
+        title="Volatility Comparison",
         yaxis_title="Annualized Volatility (%)",
         template="plotly_dark",
         showlegend=True,
         height=400,
+        paper_bgcolor="#1a1f2b",
+        plot_bgcolor="#1a1f2b",
+        font=dict(color="#e6e9ef"),
         annotations=[dict(x=x, y=y + 0.4, text=f"{y:.2f}%", showarrow=False, font=dict(color="#ffffff"))
                      for x, y in zip(['ATM IV', 'Realized Vol (7D)', 'GARCH Vol (7D)'], [seller["avg_iv"], hv_7, garch_7d])]
     )
     return fig
 
 def plot_chain_analysis(full_chain_df):
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=full_chain_df["Strike"], y=full_chain_df["IV Skew"], mode='lines+markers', name='IV Skew', line=dict(color='#9b59b6')))
-    fig.add_hline(y=0, line_dash="dash", line_color="gray")
-    fig.update_layout(title="IV Skew", xaxis_title="Strike", yaxis_title="IV Skew (%)", template="plotly_dark", height=300)
+    fig1 = go.Figure()
+    fig1.add_trace(go.Scatter(x=full_chain_df["Strike"], y=full_chain_df["IV Skew"], mode='lines+markers', name='IV Skew', line=dict(color='#28a745')))
+    fig1.add_hline(y=0, line_dash="dash", line_color="#a3bffa")
+    fig1.update_layout(title="IV Skew", xaxis_title="Strike", yaxis_title="IV Skew (%)", template="plotly_dark", height=300, paper_bgcolor="#1a1f2b", plot_bgcolor="#1a1f2b", font=dict(color="#e6e9ef"))
+    
     fig2 = go.Figure()
-    fig2.add_trace(go.Scatter(x=full_chain_df["Strike"], y=full_chain_df["Total Theta"], mode='lines+markers', name='Total Theta', line=dict(color='#2ecc71')))
-    fig2.update_layout(title="Total Theta", xaxis_title="Strike", yaxis_title="Theta", template="plotly_dark", height=300)
+    fig2.add_trace(go.Scatter(x=full_chain_df["Strike"], y=full_chain_df["Total Theta"], mode='lines+markers', name='Total Theta', line=dict(color='#ffc107')))
+    fig2.update_layout(title="Total Theta", xaxis_title="Strike", yaxis_title="Theta", template="plotly_dark", height=300, paper_bgcolor="#1a1f2b", plot_bgcolor="#1a1f2b", font=dict(color="#e6e9ef"))
+    
     fig3 = go.Figure()
-    fig3.add_trace(go.Scatter(x=full_chain_df["Strike"], y=full_chain_df["Straddle Price"], mode='lines+markers', name='Straddle Price', line=dict(color='#e67e22')))
-    fig3.update_layout(title="Straddle Price", xaxis_title="Strike", yaxis_title="Price (₹)", template="plotly_dark", height=300)
+    fig3.add_trace(go.Scatter(x=full_chain_df["Strike"], y=full_chain_df["Straddle Price"], mode='lines+markers', name='Straddle Price', line=dict(color='#dc3545')))
+    fig3.update_layout(title="Straddle Price", xaxis_title="Strike", yaxis_title="Price (₹)", template="plotly_dark", height=300, paper_bgcolor="#1a1f2b", plot_bgcolor="#1a1f2b", font=dict(color="#e6e9ef"))
+    
     fig4 = go.Figure()
-    fig4.add_trace(go.Bar(x=full_chain_df["Strike"], y=full_chain_df["Total OI"], name='Total OI', marker_color='#3498db'))
-    fig4.update_layout(title="Total OI", xaxis_title="Strike", yaxis_title="OI", template="plotly_dark", height=300)
-    return [fig, fig2, fig3, fig4]
-
+    fig4.add_trace(go.Bar(x=full_chain_df["Strike"], y=full_chain_df["Total OI"], name='Total OI', marker_color='#28a745'))
+    fig4.update_layout(title="Total OI", xaxis_title="Strike", yaxis_title="OI", template="plotly_dark", height=300, paper_bgcolor="#1a1f2b", plot_bgcolor="#1a1f2b", font=dict(color="#e6e9ef"))
+    
+    return [fig1, fig3, fig2]
+    
 def plot_payoff_diagram(strategy_details, spot_price, config):
     fig = go.Figure()
-    strikes = np.linspace(spot_price - 300, spot_price + 300, 100)
+    strikes = np.linspace(spot_price - 50, spot_price + 50, 100)
     for detail in strategy_details:
-        payoffs = np.zeros_like(strikes)
-        for order in detail["orders"]:
-            instrument = order["instrument_key"]
-            qty = order["quantity"]
-            is_buy = order["transaction_type"] == "BUY"
-            multiplier = 1 if is_buy else -1
-            strike = detail["strikes"][detail["orders"].index(order)]
-            is_call = "CE" in instrument
-            price = detail["pricing"].get(instrument, {}).get("last_price", 0)
-            if is_call:
-                payoff = multiplier * (np.maximum(0, strikes - strike) - price)
-            else:
-                payoff = multiplier * (np.maximum(0, strike - strikes) - price)
-            payoffs += payoff * qty / config["lot_size"]
-        fig.add_trace(go.Scatter(x=strikes, y=payoffs, mode='lines', name=detail["strategy"]))
-    fig.add_vline(x=spot_price, line_dash="dash", line_color="gray", annotation_text="Spot Price")
+        try:
+            payoffs = np.zeros_like(strikes)
+            for order in range(len(detail["orders"])):
+                instrument = detail["orders"][order]["instrument_key"]
+                qty = detail["orders"][order]["quantity"]
+                is_buy = detail["orders"][order]["transaction_type"] == "BUY"
+                multiplier = 1 if is_buy == 1 else -1
+                strike = detail["strikes"][order]
+                is_call = "CE" in instrument
+                price = detail["pricing"].get(instrument, {}).get("last_price", 0)
+                if is_call:
+                    payoff = multiplier * (np.maximum(0, strikes - strike) - price)
+                else:
+                    payoff = multiplier * (np.maximum(0, strike - strikes) - price)
+                payoffs += payoff * qty / config["lot_size"]
+            fig.add_trace(go.Scatter(x=strikes, y=payoffs, mode='lines', name=detail["strategy"], line=dict(color='#28a745')))
+        except Exception as e:
+            st.error(f"Error plotting payoff for {detail['strategy']}: {e}")
+            continue
+    fig.add_vline(x=spot_price, line_dash="dash", line_color="#a3bffa", annotation_text="Spot Price")
     fig.update_layout(
         title="Payoff Diagram",
         xaxis_title="Underlying Price",
         yaxis_title="Payoff (₹)",
         template="plotly_dark",
         showlegend=True,
-        height=400
+        height=400,
+        paper_bgcolor="#1a1f2b",
+        plot_bgcolor="#1a1f2b",
+        font=dict(color="#e6e9ef")
     )
     return fig
 
@@ -902,43 +937,64 @@ if st.session_state.data_loaded and st.session_state.access_token:
         st.header("Market Overview")
         st.subheader("Key Metrics")
         col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Spot Price", f"₹{spot_price:.0f}")
-        col1.metric("ATM Strike", f"{seller['strike']:.0f}")
-        col1.metric("Straddle Price", f"₹{seller['straddle_price']:.2f}")
-        col1.metric("Breakeven Range", f"{seller['strike'] - seller['straddle_price']:.0f} – {seller['strike'] + seller['straddle_price']:.0f}")
-        col2.metric("ATM IV", f"{seller['avg_iv']:.2f}%")
-        col2.metric("Realized Vol (7D)", f"{hv_7:.2f}%")
-        col2.metric("GARCH Vol (7D)", f"{garch_7d:.2f}%")
-        col2.metric("IV - RV Spread", f"{iv_rv_spread:+.2f}%")
-        col3.metric("IV Percentile (IVP)", f"{ivp}%")
-        col3.metric("Theta (Total)", f"₹{seller['theta']:.2f}")
-        col3.metric("Vega (IV Risk)", f"₹{seller['vega']:.2f}")
-        col3.metric("Delta", f"{seller['delta']:.4f}")
-        col4.metric("Gamma", f"{seller['gamma']:.6f}")
-        col4.metric("POP (Avg)", f"{seller['pop']:.2f}%")
-        col4.metric("Days to Expiry", f"{market['days_to_expiry']} days")
-        col4.metric("PCR", f"{market['pcr']:.2f}")
-        col4.metric("Max Pain", f"{market['max_pain']:.0f}")
-        col4.metric("IV Skew Slope", f"{iv_skew_slope:.4f}")
-        st.subheader("Volatility Comparison")
+        metrics = [
+            {"label": "Spot Price", "value": f"₹{spot_price:.0f}", "color": "#28a745"},
+            {"label": "ATM Strike", "value": f"{seller['strike']:.0f}", "color": "#28a745"},
+            {"label": "Straddle Price", "value": f"₹{seller['straddle_price']:.2f}", "color": "#28a745"},
+            {"label": "Breakeven Range", "value": f"{seller['strike']} - {seller['straddle_price']:.0f} - {seller['strike'] + seller['straddle_price']:.0f}", "color": "#28a745"},
+            {"label": "ATM IV", "value": f"{seller['avg_iv']:.2f}%", "color": "#28a745"},
+            {"label": "Realized Vol (7D)", "value": f"{hv_7:.2f}%", "color": "#ffc107"},
+            {"label": "GARCH Vol (7D)", "value": f"{garch_7d:.2f}%", "color": "#ffc107"},
+            {"label": "IV-RV Spread", "value": f"{iv_rv_spread:.2f}%", "color": "#dc3545" if iv_rv_spread > 0 else "#28a745"},
+            {"label": "IV Percentile (IVP)", "value": f"{ivp:.2f}%", "color": "#28a745"},
+            {"label": "Theta (Total)", "value": f"₹{seller['theta']:.2f}", "color": "#28a745"},
+            {"label": "Vega (IV Risk)", "value": f"₹{seller['vega']:.2f}", "color": "#28a745"},
+            {"label": "Delta (Total)", "value": f"{seller['delta']:.4f}", "color": "#28a745"},
+            {"label": "Gamma (Total)", "value": f"{seller['gamma']:.6f}", "color": "#28a745"},
+            {"label": "POP (Avg.)", "value": f"{seller['pop']:.2f}%", "color": "#28a745"},
+            {"label": "Days to Expiry", "value": f"{market['days_to_expiry']} days", "color": "#28a745"},
+            {"label": "PCR (OI Ratio)", "value": f"{market['pcr']:.2f}", "color": "#28a745"},
+            {"label": "Max Pain", "value": f"{market['max_pain']:.0f}", "color": "#28a745"},
+            {"label": "IV Skew Slope", "value": f"{iv_skew_slope:.4f}", "color": "#28a745"}
+        ]
+        for i, metric in enumerate(metrics):
+            col = cols[i % 4]
+            col.markdown(f"""
+                <div class="metric-card">
+                    <div class="metric-label">{metric['label']}</div>
+                    <div class="metric-value" style="color: {metric['color']}">{metric['value']}</div>
+                </div>
+            """, unsafe_allow_html=True)
+        st.subheader("Volatility Analysis")
         st.plotly_chart(plot_vol_comparison(seller, hv_7, garch_7d), use_container_width=True)
         st.subheader("Portfolio Summary")
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Total Capital", f"₹{portfolio_summary['Total Capital']:,.2f}")
-        col1.metric("Capital Deployed", f"₹{portfolio_summary['Capital Deployed']:,.2f}")
-        col1.metric("Exposure %", f"{portfolio_summary['Exposure %']:.2f}%")
-        col2.metric("Risk on Table", f"₹{portfolio_summary['Risk on Table']:,.2f}")
-        col2.metric("Risk %", f"{portfolio_summary['Risk %']:.2f}%")
-        col2.metric("Daily Risk Limit", f"₹{portfolio_summary['Daily Risk Limit']:,.2f}")
-        col3.metric("Weekly Risk Limit", f"₹{portfolio_summary['Weekly Risk Limit']:,.2f}")
-        col3.metric("Realized P&L", f"₹{portfolio_summary['Realized P&L']:,.2f}")
-        col3.metric("Drawdown %", f"{portfolio_summary['Drawdown %']:.2f}%")
+        portfolio_metrics = [
+            {"label": "Total Capital", "value": f"₹{portfolio_summary['Total Capital']:,.2f}", "color": "#28a745"},
+            {"label": "Capital Deployed", "value": f"₹{portfolio_summary['Capital Deployed']:,.2f}", "color": "#28a745"},
+            {"label": "Exposure %", "value": f"{portfolio_summary['Exposure %']:.2f}%", "color": "#28a745"},
+            {"label": "Risk on Table", "value": f"₹{portfolio_summary['Risk on Table']:,.2f}", "color": "#dc3545" if portfolio_summary['Risk %'] > 2 else "#28a745"},
+            {"label": "Risk %", "value": f"{portfolio_summary['Risk %']:.2f}%", "color": "#dc3545" if portfolio_summary['Risk %'] > 2 else "#28a745"},
+            {"label": "Daily Risk Limit", "value": f"₹{portfolio_summary['Daily Risk Limit']:,.2f}", "color": "#28a745"},
+            {"label": "Weekly Risk Limit", "value": f"₹{portfolio_summary['Weekly Risk Limit']:,.2f}", "color": "#28a745"},
+            {"label": "Realized P&L", "value": f"₹{portfolio_summary['Realized P&L']:,.2f}", "color": "#28a745" if portfolio_summary['Realized P&L'] >= 0 else "#dc3545"},
+            {"label": "Drawdown %", "value": f"{portfolio_summary['Drawdown %']:.2f}%", "color": "#dc3545" if portfolio_summary['Drawdown %'] > 0 else "#28a745"},
+            {"label": "Portfolio Vega", "value": f"{portfolio_summary['Portfolio Vega']:.2f}", "color": "#28a745"}
+        ]
+        cols = st.columns(3)
+        for i, metric in enumerate(portfolio_metrics):
+            col = cols[i % 3]
+            col.markdown(f"""
+                <div class="metric-card">
+                    <div class="metric-label">{metric['label']}</div>
+                    <div class="metric-value" style="color: {metric['color']}">{metric['value']}</div>
+                </div>
+            """, unsafe_allow_html=True)
         if portfolio_summary.get("Flags"):
-            st.warning("🚨 Risks/Warnings:")
+            st.warning("🚨 Risk Alerts:")
             for flag in portfolio_summary["Flags"]:
-                st.write(flag)
+                st.markdown(f"- {flag}")
         else:
-            st.success("✅ No risk violations.")
+            st.success("✅ All risks within limits.")
         st.subheader("Risk Gauge")
         fig = go.Figure(go.Indicator(
             mode="gauge+number",
@@ -946,11 +1002,11 @@ if st.session_state.data_loaded and st.session_state.access_token:
             title={'text': "Portfolio Risk %"},
             gauge={
                 'axis': {'range': [0, 5], 'tickwidth': 1, 'tickcolor': "white"},
-                'bar': {'color': "#3498db"},
+                'bar': {'color': "#28a745"},
                 'steps': [
-                    {'range': [0, 2], 'color': "#2ecc71"},
-                    {'range': [2, 4], 'color': "#f1c40f"},
-                    {'range': [4, 5], 'color': "#e74c3c"}
+                    {'range': [0, 2], 'color': "#28a745"},
+                    {'range': [2, 4], 'color': "#ffc107"},
+                    {'range': [4, 5], 'color': "#dc3545"}
                 ],
                 'threshold': {
                     'line': {'color': "white", 'width': 4},
@@ -958,16 +1014,16 @@ if st.session_state.data_loaded and st.session_state.access_token:
                 }
             }
         ))
-        fig.update_layout(template="plotly_dark", height=300)
+        fig.update_layout(template="plotly_dark", height=300, paper_bgcolor="#1a1f2b", font=dict(color="#e6e9ef"))
         st.plotly_chart(fig, use_container_width=True)
 
     with tab2:
         st.header("Option Chain Analysis")
-        st.subheader("ATM ±300 Chain Table")
-        st.dataframe(full_chain_df.style.set_properties(**{
-            'background-color': '#34495e',
+        st.subheader("ATM ±300 Chain")
+        st.dataframe(full_chain_df, style=lambda x: x.style.set_properties(**{
+            'background-color': '#2c3344',
             'color': '#ffffff',
-            'border-color': '#3498db',
+            'border-color': '#28a745',
             'text-align': 'center'
         }).format({
             'Strike': '{:.0f}',
@@ -978,75 +1034,93 @@ if st.session_state.data_loaded and st.session_state.access_token:
             'Total Vega': '{:.2f}',
             'Straddle Price': '{:.2f}',
             'Total OI': '{:.0f}'
-        }))
+        }).set_table_styles([
+            {'selector': 'th', 'props': [('background-color', '#28a745'), ('color', '#ffffff')]},
+            {'selector': 'tr:hover', 'props': [('background-color', '#3a4257')]}
+        ]))
         eff_df = full_chain_df.copy()
         eff_df["Theta/Vega"] = eff_df["Total Theta"] / eff_df["Total Vega"]
         eff_df = eff_df[["Strike", "Total Theta", "Total Vega", "Theta/Vega"]].sort_values("Theta/Vega", ascending=False)
         st.subheader("Theta/Vega Ranking")
-        st.dataframe(eff_df.style.set_properties(**{
-            'background-color': '#34495e',
+        st.dataframe(eff_df, style=lambda x: x.style.set_properties(**{
+            'background-color': '#2c3344',
             'color': '#ffffff',
-            'border-color': '#3498db',
+            'border-color': '#28a745',
             'text-align': 'center'
         }).format({
             'Strike': '{:.0f}',
             'Total Theta': '{:.2f}',
             'Total Vega': '{:.2f}',
             'Theta/Vega': '{:.2f}'
-        }))
-        st.subheader("Chain Analysis Plots")
+        }).set_table_styles([
+            {'selector': 'th', 'props': [('background-color', '#28a745'), ('color', '#ffffff')]},
+            {'selector': 'tr:hover', 'props': [('background-color', '#3a4257')]}
+        ]))
+        st.subheader("Chain Analysis")
         figs = plot_chain_analysis(full_chain_df)
         col1, col2 = st.columns(2)
         col1.plotly_chart(figs[0], use_container_width=True)
         col1.plotly_chart(figs[1], use_container_width=True)
         col2.plotly_chart(figs[2], use_container_width=True)
-        col2.plotly_chart(figs[3], use_container_width=True)
 
     with tab3:
         st.header("Events & Volatility Regime")
         st.subheader("Upcoming Events")
         if not event_df.empty:
-            st.dataframe(event_df.style.set_properties(**{
-                'background-color': '#34495e',
+            # Format event_df to handle non-numeric values
+            event_df_display = event_df.copy()
+            event_df_display['Forecast'] = event_df_display['Forecast'].apply(lambda x: f"{float(x.strip('%')):.2f}" if isinstance(x, str) and '%' in x else x if pd.notnull(x) else '')
+            event_df_display['Prior'] = event_df_display['Prior'].apply(lambda x: f"{float(x.strip('%')):.2f}" if isinstance(x, str) and '%' in x else x if pd.notnull(x) else '')
+            st.dataframe(event_df_display, style=lambda x: x.style.set_properties(**{
+                'background-color': '#2c3344',
                 'color': '#ffffff',
-                'border-color': '#3498db',
+                'border-color': '#28a745',
                 'text-align': 'center'
             }).format({
                 'Datetime': lambda x: x.strftime('%Y-%m-%d %H:%M') if pd.notnull(x) else '',
-                'Forecast': '{:.2f}',
-                'Prior': '{:.2f}'
-            }))
-            if any((datetime.strptime(config['expiry_date'], "%Y-%m-%d") - dt).days <= 3 and impact == "High" 
+                'Forecast': '{}',
+                'Prior': '{}'
+            }).set_table_styles([
+                {'selector': 'th', 'props': [('background-color', '#28a745'), ('color', '#ffffff')]},
+                {'selector': 'tr:hover', 'props': [('background-color', '#3a4257')]}
+            ]))
+            if any((datetime.strptime(config['expiry_date'], "%Y-%m-%d") - dt).days <= 7 and impact == "High" 
                    for dt, impact in zip(event_df["Datetime"], event_df["Classification"])):
-                st.warning("⚠️ High-impact event within 3 days of expiry.")
+                st.warning("⚠️ High-impact event within 7 days of expiry.")
         else:
-            st.info("No events found.")
+            st.info("No upcoming events found.")
         st.subheader("Volatility Regime")
-        st.write(f"**Regime**: {regime} (Score: {regime_score:.2f})")
-        st.write(f"**Note**: {regime_note}")
-        st.write(f"**Details**: {regime_explanation}")
+        st.markdown(f"""
+            <div style="background-color: #2c3344; padding: 15px; border-radius: 8px;">
+                <strong>Regime:</strong> {regime} (Score: {regime_score:.2f})<br>
+                <strong>Note:</strong> {regime_note}<br>
+                <strong>Details:</strong> {regime_explanation}
+            </div>
+        """, unsafe_allow_html=True)
 
     with tab4:
         st.header("Strategies & Order Placement")
         st.subheader("Suggested Strategies")
-        st.write(f"**Strategies**: {', '.join(strategies)}")
-        st.write(f"**Rationale**: {strategy_rationale}")
+        st.markdown(f"<strong>Strategies:</strong> {', '.join(strategies)}", unsafe_allow_html=True)
+        st.markdown(f"<em>Rationale:</em> {strategy_rationale}", unsafe_allow_html=True)
         if event_warning:
             st.warning(event_warning)
         st.subheader("Strategy Details")
         for detail in strategy_details:
-            with st.expander(detail['strategy']):
-                st.write(f"**Strikes**: {detail['strikes']}")
-                st.write(f"**Premium**: ₹{detail['premium']:.2f}")
-                st.write(f"**Max Profit**: ₹{detail['max_profit']:.2f}")
-                st.write(f"**Max Loss**: ₹{detail['max_loss']:.2f}" if detail['max_loss'] != float('inf') else "**Max Loss**: Unlimited")
+            with st.expander(f"{detail['strategy']}"):
+                st.markdown(f"""
+                    <strong>Strikes:</strong> {detail['strikes']}<br>
+                    <strong>Premium:</strong> ₹{detail['premium']:.2f}<br>
+                    <strong>Max Profit:</strong> ₹{detail['max_profit']:.2f}<br>
+                    <strong>Max Loss:</strong> {'₹' if detail['max_loss'] != float('inf') else 'Unlimited'}
+                """, unsafe_allow_html=True)
         st.subheader("Payoff Diagram")
         st.plotly_chart(plot_payoff_diagram(strategy_details, spot_price, config), use_container_width=True)
         st.subheader("Execute Strategy")
-        strategy_options = [detail['strategy'] for detail in strategy_details]
+        strategy_options = [detail['strategy"] for detail in strategy_details]
         strategy_choice = st.selectbox("Choose Strategy", strategy_options)
-        lots = st.number_input("Number of Lots", min_value=1, max_value=10, value=1)
-        if st.button("Place Order"):
+        lots = st.number_input("Number of Lots", min_value=1, max_value=50, value=1)
+        if st.button("Execute Order"):
             for detail in strategy_details:
                 if detail['strategy'] == strategy_choice:
                     order_ids = []
@@ -1055,32 +1129,38 @@ if st.session_state.data_loaded and st.session_state.access_token:
                         order_id = place_order(config, order["instrument_key"], order["quantity"] * lots, order["transaction_type"])
                         if order_id:
                             order_ids.append(order_id)
-                            st.success(f"Order placed: {order_id} for {order['instrument_key']} (Quantity: {order['quantity'] * lots})")
+                            st.success(f"Order placed: {order_id} for {order['instrument_key']} (Qty: {order['quantity'] * lots})")
                         else:
                             failed_orders.append(order["instrument_key"])
                             st.error(f"Order failed for {order['instrument_key']}")
                     if order_ids:
-                        st.success(f"Successfully placed {len(order_ids)}/{len(detail['orders'])} AMO orders for {detail['strategy']}.")
+                        st.success(f"Successfully placed {len(order_ids)}/{len(detail['orders'])} orders for {strategy_choice}.")
                         if failed_orders:
                             st.warning(f"Warning: {len(failed_orders)} orders failed: {failed_orders}")
                     else:
-                        st.error(f"All orders failed for {detail['strategy']}.")
+                        st.error(f"All orders failed for {strategy_choice}.")
                     break
         st.subheader("Risk Summary")
-        st.dataframe(strategy_df.style.set_properties(**{
-            'background-color': '#34495e',
+        st.dataframe(strategy_df, style=lambda x: x.style.set_properties(**{
+            'background-color': '#2c3f44',
             'color': '#ffffff',
-            'border-color': '#3498db',
+            'border-color': '#28a745',
             'text-align': 'center'
         }).format({
             'Capital Used': '{:.2f}',
             'Cap Limit': '{:.0f}',
             '% Used': '{:.2f}',
-            'Potential Risk': '{:.2f}',
-            'Risk Limit': '{:.0f}',
+            'Potential Risk': '{:.1f}',
+            'Risk Limit': '{:.2f}',
             'P&L': '{:.2f}',
-            'Vega': '{:.2f}'
-        }))
+            'Vega': '{:.2f}',
+        }).set_table_styles([
+            {'selector': 'th', 'props': [('background-color', '#28a745'), ('color', '#ffffff')]},
+            {'selector': 'tr:hover', 'props': [('background-color', '#3a4257')]}
+        ]))
+    
+    # Footer
+    st.markdown("<div class='footer'>Crafted with ❤️ by Shritish Shukla</div>", unsafe_allow_html=True)
 
 else:
-    st.info("Enter your Upstox API access token in the sidebar and click 'Fetch Data' to start.")
+    st.info("Enter your Upstox API access token in the sidebar and click 'Fetch Data' to begin.")
