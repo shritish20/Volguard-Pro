@@ -1022,7 +1022,8 @@ if st.session_state.data_loaded and st.session_state.access_token:
     with tab2:
         st.header("Option Chain Analysis")
         st.subheader("ATM ±300 Chain")
-        st.dataframe(full_chain_df, style=lambda x: x.style.set_properties(**{
+        # Corrected way to display styled DataFrame
+        styled_full_chain_df = full_chain_df.style.set_properties(**{
             'background-color': '#2c3344',
             'color': '#ffffff',
             'border-color': '#28a745',
@@ -1039,12 +1040,15 @@ if st.session_state.data_loaded and st.session_state.access_token:
         }).set_table_styles([
             {'selector': 'th', 'props': [('background-color', '#28a745'), ('color', '#ffffff')]},
             {'selector': 'tr:hover', 'props': [('background-color', '#3a4257')]}
-        ]))
+        ])
+        st.dataframe(styled_full_chain_df, use_container_width=True) # Display the styled object directly
+
         eff_df = full_chain_df.copy()
         eff_df["Theta/Vega"] = eff_df["Total Theta"] / eff_df["Total Vega"]
         eff_df = eff_df[["Strike", "Total Theta", "Total Vega", "Theta/Vega"]].sort_values("Theta/Vega", ascending=False)
         st.subheader("Theta/Vega Ranking")
-        st.dataframe(eff_df, style=lambda x: x.style.set_properties(**{
+        # Corrected way to display styled DataFrame
+        styled_eff_df = eff_df.style.set_properties(**{
             'background-color': '#2c3344',
             'color': '#ffffff',
             'border-color': '#28a745',
@@ -1057,13 +1061,8 @@ if st.session_state.data_loaded and st.session_state.access_token:
         }).set_table_styles([
             {'selector': 'th', 'props': [('background-color', '#28a745'), ('color', '#ffffff')]},
             {'selector': 'tr:hover', 'props': [('background-color', '#3a4257')]}
-        ]))
-        st.subheader("Chain Analysis")
-        figs = plot_chain_analysis(full_chain_df)
-        col1, col2 = st.columns(2)
-        col1.plotly_chart(figs[0], use_container_width=True)
-        col1.plotly_chart(figs[1], use_container_width=True)
-        col2.plotly_chart(figs[2], use_container_width=True)
+        ])
+        st.dataframe(styled_eff_df, use_container_width=True) # Display the styled object directly
 
     with tab3:
         st.header("Events & Volatility Regime")
@@ -1071,9 +1070,11 @@ if st.session_state.data_loaded and st.session_state.access_token:
         if not event_df.empty:
             # Format event_df to handle non-numeric values
             event_df_display = event_df.copy()
-            event_df_display['Forecast'] = event_df_display['Forecast'].apply(lambda x: f"{float(x.strip('%')):.2f}" if isinstance(x, str) and '%' in x else x if pd.notnull(x) else '')
-            event_df_display['Prior'] = event_df_display['Prior'].apply(lambda x: f"{float(x.strip('%')):.2f}" if isinstance(x, str) and '%' in x else x if pd.notnull(x) else '')
-            st.dataframe(event_df_display, style=lambda x: x.style.set_properties(**{
+            event_df_display['Forecast'] = event_df_display['Forecast'].apply(lambda x: f"{float(str(x).strip('%')):.2f}" if isinstance(x, str) and '%' in str(x) else x if pd.notnull(x) else '')
+            event_df_display['Prior'] = event_df_display['Prior'].apply(lambda x: f"{float(str(x).strip('%')):.2f}" if isinstance(x, str) and '%' in str(x) else x if pd.notnull(x) else '')
+
+            # Corrected way to display styled DataFrame
+            styled_event_df = event_df_display.style.set_properties(**{
                 'background-color': '#2c3344',
                 'color': '#ffffff',
                 'border-color': '#28a745',
@@ -1085,8 +1086,10 @@ if st.session_state.data_loaded and st.session_state.access_token:
             }).set_table_styles([
                 {'selector': 'th', 'props': [('background-color', '#28a745'), ('color', '#ffffff')]},
                 {'selector': 'tr:hover', 'props': [('background-color', '#3a4257')]}
-            ]))
-            if any((datetime.strptime(config['expiry_date'], "%Y-%m-%d") - dt).days <= 7 and impact == "High" 
+            ])
+            st.dataframe(styled_event_df, use_container_width=True) # Display the styled object directly
+
+            if any((datetime.strptime(config['expiry_date'], "%Y-%m-%d") - dt).days <= 7 and impact == "High"
                    for dt, impact in zip(event_df["Datetime"], event_df["Classification"])):
                 st.warning("⚠️ High-impact event within 7 days of expiry.")
         else:
@@ -1099,6 +1102,7 @@ if st.session_state.data_loaded and st.session_state.access_token:
                 <strong>Details:</strong> {regime_explanation}
             </div>
         """, unsafe_allow_html=True)
+
 
     with tab4:
         st.header("Strategies & Order Placement")
