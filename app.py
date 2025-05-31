@@ -7,6 +7,8 @@ from datetime import datetime, timedelta
 import requests
 from arch import arch_model
 from streamlit_autorefresh import st_autorefresh
+import plotly.express as px
+import plotly.graph_objects as go
 
 # Set page config for wide layout and custom title
 st.set_page_config(
@@ -16,18 +18,62 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for a professional, modern look
+# Custom CSS for a professional, high-contrast, dark-themed look
 st.markdown("""
     <style>
-    .main {background-color: #f5f7fa;}
-    .sidebar .sidebar-content {background-color: #1e2a44; color: white;}
-    .stButton>button {background-color: #007bff; color: white; border-radius: 5px;}
-    .stButton>button:hover {background-color: #0056b3;}
-    .stTextInput>div>input {border-radius: 5px;}
-    h1, h2, h3 {color: #1e2a44;}
-    .stMetric {background-color: white; border-radius: 5px; padding: 10px;}
-    .stTabs [data-baseweb="tab"] {font-size: 16px; font-weight: bold;}
-    .stTabs [data-baseweb="tab"]:hover {background-color: #e9ecef;}
+    .main {background-color: #1c2526; color: #e0e0e0;}
+    .sidebar .sidebar-content {background-color: #2c3e50; color: #ffffff;}
+    .stButton>button {
+        background-color: #3498db;
+        color: white;
+        border-radius: 8px;
+        font-weight: bold;
+        padding: 8px 16px;
+    }
+    .stButton>button:hover {
+        background-color: #2980b9;
+        color: #ffffff;
+    }
+    .stTextInput>div>input {
+        background-color: #34495e;
+        color: #ffffff;
+        border-radius: 8px;
+        border: 1px solid #3498db;
+    }
+    h1, h2, h3, h4 {color: #ffffff; font-family: 'Arial', sans-serif;}
+    .stMetric {
+        background-color: #2c3e50;
+        border-radius: 8px;
+        padding: 15px;
+        color: #ffffff;
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+    }
+    .stTabs [data-baseweb="tab"] {
+        font-size: 16px;
+        font-weight: bold;
+        color: #ffffff;
+        background-color: #34495e;
+        border-radius: 8px 8px 0 0;
+    }
+    .stTabs [data-baseweb="tab"]:hover {
+        background-color: #3498db;
+        color: #ffffff;
+    }
+    .stDataFrame {
+        background-color: #2c3e50;
+        border-radius: 8px;
+        color: #ffffff;
+    }
+    .stDataFrame table {
+        background-color: #34495e;
+        color: #ffffff;
+        border: 1px solid #3498db;
+    }
+    .stDataFrame th, .stDataFrame td {
+        color: #ffffff;
+        border: 1px solid #3498db;
+    }
+    .st-expander {background-color: #34495e; color: #ffffff; border-radius: 8px;}
     </style>
 """, unsafe_allow_html=True)
 
@@ -36,6 +82,10 @@ if 'access_token' not in st.session_state:
     st.session_state.access_token = ""
 if 'data_loaded' not in st.session_state:
     st.session_state.data_loaded = False
+if 'config' not in st.session_state:
+    st.session_state.config = None
+if 'option_chain' not in st.session_state:
+    st.session_state.option_chain = []
 
 # Sidebar
 with st.sidebar:
@@ -101,7 +151,7 @@ def get_config():
     config['expiry_date'] = get_next_expiry()
     return config
 
-# Data fetching and processing functions (from your original code, with error handling)
+# Data fetching and processing functions
 @st.cache_data(show_spinner=False)
 def fetch_option_chain(config):
     try:
@@ -374,7 +424,7 @@ def fetch_trade_data(config, full_chain_df):
                     "realized_pnl": pos["pnl"] - brokerage,
                     "trades_today": trade_counts.get(strat, 1),
                     "sl_hit": pos["pnl"] < -capital * 0.05,
-                    "vega": full_chain_df["Total Vega"].mean()
+                    "vega": full_chain_df["Total Vega"].mean() if not full_chain_df.empty else 0
                 })
             return pd.DataFrame(trades_df) if trades_df else pd.DataFrame()
         st.error(f"Failed to fetch positions or trades: {res_positions.status_code}, {res_trades.status_code}")
@@ -516,7 +566,7 @@ def get_option_greeks(config, instrument_keys):
         st.error(f"Failed to fetch option Greeks: {e}")
         return {}
 
-# Strategy functions (simplified for brevity, same as your original code)
+# Strategy functions
 def iron_fly(option_chain, spot_price, config, lots=1):
     atm = min(option_chain, key=lambda x: abs(x["strike_price"] - spot_price))
     strike = atm["strike_price"]
@@ -711,36 +761,40 @@ def atm_strangle(option_chain, spot_price, config, lots=1):
             "premium": premium, "max_loss": max_loss, "max_profit": premium, "orders": orders}
 
 def plot_vol_comparison(seller, hv_7, garch_7d):
-    fig, ax = plt.subplots(figsize=(8, 5))
-    labels = ['ATM IV', 'Realized Vol (7D)', 'GARCH Vol (7D)']
-    values = [seller["avg_iv"], hv_7, garch_7d]
-    colors = ['#1f77b4', '#2ca02c', '#d62728']
-    bars = ax.bar(labels, values, color=colors)
-    for bar in bars:
-        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.4, f"{bar.get_height():.2f}%", ha='center')
-    ax.set_title("Volatility Comparison: IV vs RV vs GARCH")
-    ax.set_ylabel("Annualized Volatility (%)")
-    ax.grid(axis='y', linestyle='--')
+    fig = go.Figure(data=[
+        go.Bar(name='ATM IV', x=['ATM IV'], y=[seller["avg_iv"]], marker_color='#3498db'),
+        go.Bar(name='Realized Vol (7D)', x=['Realized Vol (7D)'], y=[hv_7], marker_color='#2ecc71'),
+        go.Bar(name='GARCH Vol (7D)', x=['GARCH Vol (7D)'], y=[garch_7d], marker_color='#e74c3c')
+    ])
+    fig.update_layout(
+        title="Volatility Comparison: IV vs RV vs GARCH",
+        yaxis_title="Annualized Volatility (%)",
+        template="plotly_dark",
+        showlegend=True,
+        height=400,
+        annotations=[dict(x=x, y=y + 0.4, text=f"{y:.2f}%", showarrow=False, font=dict(color="#ffffff"))
+                     for x, y in zip(['ATM IV', 'Realized Vol (7D)', 'GARCH Vol (7D)'], [seller["avg_iv"], hv_7, garch_7d])]
+    )
     return fig
 
 def plot_chain_analysis(full_chain_df):
-    sns.set_style("whitegrid")
-    fig, axes = plt.subplots(2, 2, figsize=(16, 10))
-    sns.lineplot(data=full_chain_df, x="Strike", y="IV Skew", ax=axes[0, 0], marker="o", color="purple")
-    axes[0, 0].set_title("IV Skew")
-    axes[0, 0].axhline(0, linestyle='--', color="gray")
-    sns.lineplot(data=full_chain_df, x="Strike", y="Total Theta", ax=axes[0, 1], marker="o", color="green")
-    axes[0, 1].set_title("Total Theta")
-    sns.lineplot(data=full_chain_df, x="Strike", y="Straddle Price", ax=axes[1, 0], marker="o", color="orange")
-    axes[1, 0].set_title("Straddle Price")
-    sns.barplot(data=full_chain_df, x="Strike", y="Total OI", ax=axes[1, 1], palette="Blues_d")
-    axes[1, 1].set_title("Total OI")
-    axes[1, 1].tick_params(axis='x', rotation=45)
-    plt.tight_layout()
-    return fig
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=full_chain_df["Strike"], y=full_chain_df["IV Skew"], mode='lines+markers', name='IV Skew', line=dict(color='#9b59b6')))
+    fig.add_hline(y=0, line_dash="dash", line_color="gray")
+    fig.update_layout(title="IV Skew", xaxis_title="Strike", yaxis_title="IV Skew (%)", template="plotly_dark", height=300)
+    fig2 = go.Figure()
+    fig2.add_trace(go.Scatter(x=full_chain_df["Strike"], y=full_chain_df["Total Theta"], mode='lines+markers', name='Total Theta', line=dict(color='#2ecc71')))
+    fig2.update_layout(title="Total Theta", xaxis_title="Strike", yaxis_title="Theta", template="plotly_dark", height=300)
+    fig3 = go.Figure()
+    fig3.add_trace(go.Scatter(x=full_chain_df["Strike"], y=full_chain_df["Straddle Price"], mode='lines+markers', name='Straddle Price', line=dict(color='#e67e22')))
+    fig3.update_layout(title="Straddle Price", xaxis_title="Strike", yaxis_title="Price (₹)", template="plotly_dark", height=300)
+    fig4 = go.Figure()
+    fig4.add_trace(go.Bar(x=full_chain_df["Strike"], y=full_chain_df["Total OI"], name='Total OI', marker_color='#3498db'))
+    fig4.update_layout(title="Total OI", xaxis_title="Strike", yaxis_title="OI", template="plotly_dark", height=300)
+    return [fig, fig2, fig3, fig4]
 
 def plot_payoff_diagram(strategy_details, spot_price, config):
-    fig, ax = plt.subplots(figsize=(8, 5))
+    fig = go.Figure()
     strikes = np.linspace(spot_price - 300, spot_price + 300, 100)
     for detail in strategy_details:
         payoffs = np.zeros_like(strikes)
@@ -757,18 +811,22 @@ def plot_payoff_diagram(strategy_details, spot_price, config):
             else:
                 payoff = multiplier * (np.maximum(0, strike - strikes) - price)
             payoffs += payoff * qty / config["lot_size"]
-        ax.plot(strikes, payoffs, label=detail["strategy"])
-    ax.axvline(spot_price, linestyle="--", color="gray", label="Spot Price")
-    ax.set_title("Payoff Diagram")
-    ax.set_xlabel("Underlying Price")
-    ax.set_ylabel("Payoff (₹)")
-    ax.legend()
-    ax.grid(True)
+        fig.add_trace(go.Scatter(x=strikes, y=payoffs, mode='lines', name=detail["strategy"]))
+    fig.add_vline(x=spot_price, line_dash="dash", line_color="gray", annotation_text="Spot Price")
+    fig.update_layout(
+        title="Payoff Diagram",
+        xaxis_title="Underlying Price",
+        yaxis_title="Payoff (₹)",
+        template="plotly_dark",
+        showlegend=True,
+        height=400
+    )
     return fig
 
 # Main app logic
 if st.session_state.data_loaded and st.session_state.access_token:
     config = get_config()
+    st.session_state.config = config
     option_chain = fetch_option_chain(config)
     if not option_chain:
         st.error("Failed to fetch option chain data.")
@@ -838,59 +896,126 @@ if st.session_state.data_loaded and st.session_state.access_token:
     strategy_df, portfolio_summary = evaluate_full_risk(trades_df, config, regime)
 
     # Tabs for dashboard sections
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["Market Overview", "Volatility", "Option Chain", "Events & Regime", "Strategies & Orders"])
+    tab1, tab2, tab3, tab4 = st.tabs(["Market Overview", "Option Chain", "Events & Regime", "Strategies & Orders"])
 
     with tab1:
         st.header("Market Overview")
-        col1, col2, col3 = st.columns(3)
+        st.subheader("Key Metrics")
+        col1, col2, col3, col4 = st.columns(4)
         col1.metric("Spot Price", f"₹{spot_price:.0f}")
         col1.metric("ATM Strike", f"{seller['strike']:.0f}")
         col1.metric("Straddle Price", f"₹{seller['straddle_price']:.2f}")
-        col2.metric("India VIX", f"{vix:.2f}")
-        col2.metric("PCR", f"{market['pcr']:.2f}")
-        col2.metric("Max Pain", f"{market['max_pain']:.0f}")
-        col3.metric("Days to Expiry", f"{market['days_to_expiry']} days")
-        col3.metric("ATM IV", f"{seller['avg_iv']:.2f}%")
-        col3.metric("IVP", f"{ivp}%")
+        col1.metric("Breakeven Range", f"{seller['strike'] - seller['straddle_price']:.0f} – {seller['strike'] + seller['straddle_price']:.0f}")
+        col2.metric("ATM IV", f"{seller['avg_iv']:.2f}%")
+        col2.metric("Realized Vol (7D)", f"{hv_7:.2f}%")
+        col2.metric("GARCH Vol (7D)", f"{garch_7d:.2f}%")
+        col2.metric("IV - RV Spread", f"{iv_rv_spread:+.2f}%")
+        col3.metric("IV Percentile (IVP)", f"{ivp}%")
+        col3.metric("Theta (Total)", f"₹{seller['theta']:.2f}")
+        col3.metric("Vega (IV Risk)", f"₹{seller['vega']:.2f}")
+        col3.metric("Delta", f"{seller['delta']:.4f}")
+        col4.metric("Gamma", f"{seller['gamma']:.6f}")
+        col4.metric("POP (Avg)", f"{seller['pop']:.2f}%")
+        col4.metric("Days to Expiry", f"{market['days_to_expiry']} days")
+        col4.metric("PCR", f"{market['pcr']:.2f}")
+        col4.metric("Max Pain", f"{market['max_pain']:.0f}")
+        col4.metric("IV Skew Slope", f"{iv_skew_slope:.4f}")
+        st.subheader("Volatility Comparison")
+        st.plotly_chart(plot_vol_comparison(seller, hv_7, garch_7d), use_container_width=True)
         st.subheader("Portfolio Summary")
-        for k, v in portfolio_summary.items():
-            if k != "Flags":
-                if isinstance(v, float):
-                    st.write(f"{k}: ₹{v:,.2f}" if "Capital" in k or "Risk" in k or "P&L" in k or "Drawdown" in k else f"{k}: {v:.2f}%")
-                else:
-                    st.write(f"{k}: {v}")
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Total Capital", f"₹{portfolio_summary['Total Capital']:,.2f}")
+        col1.metric("Capital Deployed", f"₹{portfolio_summary['Capital Deployed']:,.2f}")
+        col1.metric("Exposure %", f"{portfolio_summary['Exposure %']:.2f}%")
+        col2.metric("Risk on Table", f"₹{portfolio_summary['Risk on Table']:,.2f}")
+        col2.metric("Risk %", f"{portfolio_summary['Risk %']:.2f}%")
+        col2.metric("Daily Risk Limit", f"₹{portfolio_summary['Daily Risk Limit']:,.2f}")
+        col3.metric("Weekly Risk Limit", f"₹{portfolio_summary['Weekly Risk Limit']:,.2f}")
+        col3.metric("Realized P&L", f"₹{portfolio_summary['Realized P&L']:,.2f}")
+        col3.metric("Drawdown %", f"{portfolio_summary['Drawdown %']:.2f}%")
         if portfolio_summary.get("Flags"):
             st.warning("🚨 Risks/Warnings:")
             for flag in portfolio_summary["Flags"]:
                 st.write(flag)
         else:
             st.success("✅ No risk violations.")
+        st.subheader("Risk Gauge")
+        fig = go.Figure(go.Indicator(
+            mode="gauge+number",
+            value=portfolio_summary['Risk %'],
+            title={'text': "Portfolio Risk %"},
+            gauge={
+                'axis': {'range': [0, 5], 'tickwidth': 1, 'tickcolor': "white"},
+                'bar': {'color': "#3498db"},
+                'steps': [
+                    {'range': [0, 2], 'color': "#2ecc71"},
+                    {'range': [2, 4], 'color': "#f1c40f"},
+                    {'range': [4, 5], 'color': "#e74c3c"}
+                ],
+                'threshold': {
+                    'line': {'color': "white", 'width': 4},
+                    'value': portfolio_summary['Daily Risk Limit'] / portfolio_summary['Total Capital'] * 100
+                }
+            }
+        ))
+        fig.update_layout(template="plotly_dark", height=300)
+        st.plotly_chart(fig, use_container_width=True)
 
     with tab2:
-        st.header("Volatility Analysis")
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Realized Vol (7D)", f"{hv_7:.2f}%")
-        col2.metric("GARCH Vol (7D)", f"{garch_7d:.2f}%")
-        col3.metric("IV - RV Spread", f"{iv_rv_spread:+.2f}%")
-        st.pyplot(plot_vol_comparison(seller, hv_7, garch_7d))
-
-    with tab3:
         st.header("Option Chain Analysis")
         st.subheader("ATM ±300 Chain Table")
-        st.dataframe(full_chain_df)
+        st.dataframe(full_chain_df.style.set_properties(**{
+            'background-color': '#34495e',
+            'color': '#ffffff',
+            'border-color': '#3498db',
+            'text-align': 'center'
+        }).format({
+            'Strike': '{:.0f}',
+            'Call IV': '{:.2f}',
+            'Put IV': '{:.2f}',
+            'IV Skew': '{:.2f}',
+            'Total Theta': '{:.2f}',
+            'Total Vega': '{:.2f}',
+            'Straddle Price': '{:.2f}',
+            'Total OI': '{:.0f}'
+        }))
         eff_df = full_chain_df.copy()
         eff_df["Theta/Vega"] = eff_df["Total Theta"] / eff_df["Total Vega"]
         eff_df = eff_df[["Strike", "Total Theta", "Total Vega", "Theta/Vega"]].sort_values("Theta/Vega", ascending=False)
         st.subheader("Theta/Vega Ranking")
-        st.dataframe(eff_df)
+        st.dataframe(eff_df.style.set_properties(**{
+            'background-color': '#34495e',
+            'color': '#ffffff',
+            'border-color': '#3498db',
+            'text-align': 'center'
+        }).format({
+            'Strike': '{:.0f}',
+            'Total Theta': '{:.2f}',
+            'Total Vega': '{:.2f}',
+            'Theta/Vega': '{:.2f}'
+        }))
         st.subheader("Chain Analysis Plots")
-        st.pyplot(plot_chain_analysis(full_chain_df))
+        figs = plot_chain_analysis(full_chain_df)
+        col1, col2 = st.columns(2)
+        col1.plotly_chart(figs[0], use_container_width=True)
+        col1.plotly_chart(figs[1], use_container_width=True)
+        col2.plotly_chart(figs[2], use_container_width=True)
+        col2.plotly_chart(figs[3], use_container_width=True)
 
-    with tab4:
+    with tab3:
         st.header("Events & Volatility Regime")
         st.subheader("Upcoming Events")
         if not event_df.empty:
-            st.dataframe(event_df)
+            st.dataframe(event_df.style.set_properties(**{
+                'background-color': '#34495e',
+                'color': '#ffffff',
+                'border-color': '#3498db',
+                'text-align': 'center'
+            }).format({
+                'Datetime': lambda x: x.strftime('%Y-%m-%d %H:%M') if pd.notnull(x) else '',
+                'Forecast': '{:.2f}',
+                'Prior': '{:.2f}'
+            }))
             if any((datetime.strptime(config['expiry_date'], "%Y-%m-%d") - dt).days <= 3 and impact == "High" 
                    for dt, impact in zip(event_df["Datetime"], event_df["Classification"])):
                 st.warning("⚠️ High-impact event within 3 days of expiry.")
@@ -901,7 +1026,7 @@ if st.session_state.data_loaded and st.session_state.access_token:
         st.write(f"**Note**: {regime_note}")
         st.write(f"**Details**: {regime_explanation}")
 
-    with tab5:
+    with tab4:
         st.header("Strategies & Order Placement")
         st.subheader("Suggested Strategies")
         st.write(f"**Strategies**: {', '.join(strategies)}")
@@ -911,12 +1036,12 @@ if st.session_state.data_loaded and st.session_state.access_token:
         st.subheader("Strategy Details")
         for detail in strategy_details:
             with st.expander(detail['strategy']):
-                st.write(f"Strikes: {detail['strikes']}")
-                st.write(f"Premium: ₹{detail['premium']:.2f}")
-                st.write(f"Max Profit: ₹{detail['max_profit']:.2f}")
-                st.write(f"Max Loss: ₹{detail['max_loss']:.2f}" if detail['max_loss'] != float('inf') else "Max Loss: Unlimited")
+                st.write(f"**Strikes**: {detail['strikes']}")
+                st.write(f"**Premium**: ₹{detail['premium']:.2f}")
+                st.write(f"**Max Profit**: ₹{detail['max_profit']:.2f}")
+                st.write(f"**Max Loss**: ₹{detail['max_loss']:.2f}" if detail['max_loss'] != float('inf') else "**Max Loss**: Unlimited")
         st.subheader("Payoff Diagram")
-        st.pyplot(plot_payoff_diagram(strategy_details, spot_price, config))
+        st.plotly_chart(plot_payoff_diagram(strategy_details, spot_price, config), use_container_width=True)
         st.subheader("Execute Strategy")
         strategy_options = [detail['strategy'] for detail in strategy_details]
         strategy_choice = st.selectbox("Choose Strategy", strategy_options)
@@ -942,7 +1067,20 @@ if st.session_state.data_loaded and st.session_state.access_token:
                         st.error(f"All orders failed for {detail['strategy']}.")
                     break
         st.subheader("Risk Summary")
-        st.dataframe(strategy_df)
+        st.dataframe(strategy_df.style.set_properties(**{
+            'background-color': '#34495e',
+            'color': '#ffffff',
+            'border-color': '#3498db',
+            'text-align': 'center'
+        }).format({
+            'Capital Used': '{:.2f}',
+            'Cap Limit': '{:.0f}',
+            '% Used': '{:.2f}',
+            'Potential Risk': '{:.2f}',
+            'Risk Limit': '{:.0f}',
+            'P&L': '{:.2f}',
+            'Vega': '{:.2f}'
+        }))
 
 else:
     st.info("Enter your Upstox API access token in the sidebar and click 'Fetch Data' to start.")
