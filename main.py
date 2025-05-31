@@ -1469,7 +1469,7 @@ if st.session_state.logged_in and access_token:
             pos_df.columns = ["Instrument", "Quantity", "Avg Price", "P&L"]
             st.dataframe(
                 pos_df.style.format({"%.2f"}).set_properties(
-                    **{"background-color": "#1A1C24", "color":" "white"}
+                    {"background-color": "#1A1C24", "color":" "white"}
                 ),
                 use_container_width=True,
             )
