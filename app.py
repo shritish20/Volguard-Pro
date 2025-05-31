@@ -933,10 +933,10 @@ if st.session_state.data_loaded and st.session_state.access_token:
     # Tabs for dashboard sections
     tab1, tab2, tab3, tab4 = st.tabs(["Market Overview", "Option Chain", "Events & Regime", "Strategies & Orders"])
 
-    with tab1:
+        with tab1:
         st.header("Market Overview")
         st.subheader("Key Metrics")
-        col1, col2, col3, col4 = st.columns(4)
+        cols_metrics = st.columns(4) # Changed variable name to avoid confusion with portfolio_metrics columns
         metrics = [
             {"label": "Spot Price", "value": f"₹{spot_price:.0f}", "color": "#28a745"},
             {"label": "ATM Strike", "value": f"{seller['strike']:.0f}", "color": "#28a745"},
@@ -958,7 +958,7 @@ if st.session_state.data_loaded and st.session_state.access_token:
             {"label": "IV Skew Slope", "value": f"{iv_skew_slope:.4f}", "color": "#28a745"}
         ]
         for i, metric in enumerate(metrics):
-            col = cols[i % 4]
+            col = cols_metrics[i % 4] # Use cols_metrics here
             col.markdown(f"""
                 <div class="metric-card">
                     <div class="metric-label">{metric['label']}</div>
@@ -980,9 +980,9 @@ if st.session_state.data_loaded and st.session_state.access_token:
             {"label": "Drawdown %", "value": f"{portfolio_summary['Drawdown %']:.2f}%", "color": "#dc3545" if portfolio_summary['Drawdown %'] > 0 else "#28a745"},
             {"label": "Portfolio Vega", "value": f"{portfolio_summary['Portfolio Vega']:.2f}", "color": "#28a745"}
         ]
-        cols = st.columns(3)
+        cols_portfolio = st.columns(3) # Changed variable name
         for i, metric in enumerate(portfolio_metrics):
-            col = cols[i % 3]
+            col = cols_portfolio[i % 3] # Use cols_portfolio and i % 3
             col.markdown(f"""
                 <div class="metric-card">
                     <div class="metric-label">{metric['label']}</div>
@@ -1016,6 +1016,8 @@ if st.session_state.data_loaded and st.session_state.access_token:
         ))
         fig.update_layout(template="plotly_dark", height=300, paper_bgcolor="#1a1f2b", font=dict(color="#e6e9ef"))
         st.plotly_chart(fig, use_container_width=True)
+
+    
 
     with tab2:
         st.header("Option Chain Analysis")
