@@ -16,3 +16,4 @@ requests
 numpy 
 arch
 retrying 
+seaborn
