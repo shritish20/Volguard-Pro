@@ -2,8 +2,8 @@ import pandas as pd
 import numpy as np
 import requests
 from scipy.stats import linregress
-from datetime import datetime, timedelta
 from arch import arch_model
+from datetime import datetime
 
 
 def get_config(access_token):
@@ -82,22 +82,6 @@ def get_indices_quotes(config):
         return None, None
 
 
-def load_upcoming_events(config):
-    try:
-        df = pd.read_csv(config['event_url'])
-        df["Datetime"] = df["Date"] + " " + df["Time"]
-        df["Datetime"] = pd.to_datetime(df["Datetime"], format="%d-%b %H:%M", errors="coerce")
-        current_year = datetime.now().year
-        df["Datetime"] = df["Datetime"].apply(lambda dt: dt.replace(year=current_year) if pd.notnull(dt) else dt)
-        now = datetime.now()
-        expiry_dt = datetime.strptime(config['expiry_date'], "%Y-%m-%d")
-        mask = (df["Datetime"] >= now) & (df["Datetime"] <= expiry_dt)
-        filtered = df.loc[mask, ["Datetime", "Event", "Classification", "Forecast", "Prior"]]
-        return filtered.sort_values("Datetime").reset_index(drop=True)
-    except Exception as e:
-        return pd.DataFrame(columns=["Datetime", "Event", "Classification", "Forecast", "Prior"])
-
-
 def extract_seller_metrics(option_chain, spot_price):
     try:
         atm = min(option_chain, key=lambda x: abs(x["strike_price"] - spot_price))
@@ -144,8 +128,8 @@ def market_metrics(option_chain, expiry_date):
     try:
         expiry_dt = datetime.strptime(expiry_date, "%Y-%m-%d")
         days_to_expiry = (expiry_dt - datetime.now()).days
-        call_oi = sum(opt["call_options"]["market_data"]["oi"] for opt in option_chain if "call_options" in opt and "market_data" in opt["call_options"])
-        put_oi = sum(opt["put_options"]["market_data"]["oi"] for opt in option_chain if "put_options" in opt and "market_data" in opt["put_options"])
+        call_oi = sum(opt["call_options"]["market_data"]["oi"] for opt in option_chain if "call_options" in opt)
+        put_oi = sum(opt["put_options"]["market_data"]["oi"] for opt in option_chain if "put_options" in opt)
         pcr = put_oi / call_oi if call_oi != 0 else 0
         strikes = sorted(list(set([opt["strike_price"] for opt in option_chain])))
         max_pain_strike = 0
@@ -153,9 +137,9 @@ def market_metrics(option_chain, expiry_date):
         for strike in strikes:
             pain_at_strike = 0
             for opt in option_chain:
-                if "call_options" in opt and "market_data" in opt["call_options"]:
+                if "call_options" in opt:
                     pain_at_strike += max(0, strike - opt["strike_price"]) * opt["call_options"]["market_data"]["oi"]
-                if "put_options" in opt and "market_data" in opt["put_options"]:
+                if "put_options" in opt:
                     pain_at_strike += max(0, opt["strike_price"] - strike) * opt["put_options"]["market_data"]["oi"]
             if pain_at_strike < min_pain:
                 min_pain = pain_at_strike
@@ -163,6 +147,22 @@ def market_metrics(option_chain, expiry_date):
         return {"days_to_expiry": days_to_expiry, "pcr": round(pcr, 2), "max_pain": max_pain_strike}
     except Exception as e:
         return {"days_to_expiry": 0, "pcr": 0, "max_pain": 0}
+
+
+def load_upcoming_events(config):
+    try:
+        df = pd.read_csv(config['event_url'])
+        df["Datetime"] = df["Date"] + " " + df["Time"]
+        df["Datetime"] = pd.to_datetime(df["Datetime"], format="%d-%b %H:%M", errors="coerce")
+        current_year = datetime.now().year
+        df["Datetime"] = df["Datetime"].apply(lambda dt: dt.replace(year=current_year) if pd.notnull(dt) else dt)
+        now = datetime.now()
+        expiry_dt = datetime.strptime(config['expiry_date'], "%Y-%m-%d")
+        mask = (df["Datetime"] >= now) & (df["Datetime"] <= expiry_dt)
+        filtered = df.loc[mask, ["Datetime", "Event", "Classification", "Forecast", "Prior"]]
+        return filtered.sort_values("Datetime").reset_index(drop=True)
+    except Exception as e:
+        return pd.DataFrame(columns=["Datetime", "Event", "Classification", "Forecast", "Prior"])
 
 
 def load_ivp(config, seller_avg_iv):
@@ -207,36 +207,24 @@ def calculate_iv_skew_slope(full_chain_df):
 
 
 def calculate_regime(atm_iv, ivp, realized_vol, garch_vol, straddle_price, spot_price, pcr, vix, iv_skew_slope):
-    try:
-        expected_move = (straddle_price / spot_price) * 100
-        vol_spread = atm_iv - realized_vol
-        regime_score = 0
-        regime_score += 10 if ivp > 80 else -10 if ivp < 20 else 0
-        regime_score += 10 if vol_spread > 10 else -10 if vol_spread < -10 else 0
-        regime_score += 10 if vix > 20 else -10 if vix < 10 else 0
-        regime_score += 5 if pcr > 1.2 else -5 if pcr < 0.8 else 0
-        regime_score += 5 if abs(iv_skew_slope) > 0.001 else 0
-        regime_score += 10 if expected_move > 0.05 else -10 if expected_move < 0.02 else 0
-        regime_score += 5 if garch_vol > realized_vol * 1.2 else -5 if garch_vol < realized_vol * 0.8 else 0
-        if regime_score > 20:
-            regime = "🔥 High Vol Trend"
-            note = "Market in high volatility — ideal for premium selling with defined risk."
-            explanation = "High IVP, elevated VIX, and wide straddle suggest strong premium opportunities."
-        elif regime_score > 10:
-            regime = "🚧 Elevated Volatility"
-            note = "Above-average volatility — favor range-bound strategies."
-            explanation = "Moderate IVP and IV-RV spread indicate potential for mean-reverting moves."
-        elif regime_score > -10:
-            regime = "😴 Neutral Volatility"
-            note = "Balanced market — flexible strategy selection."
-            explanation = "IV and RV aligned, with moderate PCR and skew."
-        else:
-            regime = "💤 Low Volatility"
-            note = "Low volatility — cautious selling or long vega plays."
-            explanation = "Low IVP, tight straddle, and low VIX suggest limited movement."
-        return regime_score, regime, note, explanation
-    except Exception as e:
-        return 0, "Unknown", "Error calculating regime.", ""
+    expected_move = (straddle_price / spot_price) * 100
+    vol_spread = atm_iv - realized_vol
+    regime_score = 0
+    regime_score += 10 if ivp > 80 else -10 if ivp < 20 else 0
+    regime_score += 10 if vol_spread > 10 else -10 if vol_spread < -10 else 0
+    regime_score += 10 if vix > 20 else -10 if vix < 10 else 0
+    regime_score += 5 if pcr > 1.2 else -5 if pcr < 0.8 else 0
+    regime_score += 5 if abs(iv_skew_slope) > 0.001 else 0
+    regime_score += 10 if expected_move > 0.05 else -10 if expected_move < 0.02 else 0
+    regime_score += 5 if garch_vol > realized_vol * 1.2 else -5 if garch_vol < realized_vol * 0.8 else 0
+    if regime_score > 20:
+        return "🔥 High Vol Trend", "Ideal for premium selling.", "Market in high volatility — ideal for premium selling with defined risk."
+    elif regime_score > 10:
+        return "🚧 Elevated Volatility", "Favor range-bound strategies.", "Moderate IVP and IV-RV spread indicate mean-reverting moves."
+    elif regime_score > -10:
+        return "😴 Neutral Volatility", "Flexible strategy selection.", "IV and RV aligned, with moderate PCR and skew."
+    else:
+        return "💤 Low Volatility", "Cautious selling or long vega plays.", "Low IVP, tight straddle, and low VIX suggest limited movement."
 
 
 def suggest_strategy(regime_label, ivp, iv_minus_rv, days_to_expiry, event_df, expiry_date, straddle_price, spot_price):
@@ -250,50 +238,38 @@ def suggest_strategy(regime_label, ivp, iv_minus_rv, days_to_expiry, event_df, e
         try:
             dt = pd.to_datetime(row["Datetime"])
             level = row["Classification"]
-            if (level == "High") and (0 <= (datetime.strptime(expiry_date, "%Y-%m-%d") - dt).days <= event_window):
+            if level == "High" and (0 <= (datetime.strptime(expiry_date, "%Y-%m-%d") - dt).days <= event_window):
                 high_impact_event_near = True
-            if level == "High" and pd.notnull(row["Forecast"]) and pd.notnull(row["Prior"]):
+            if level == "High":
                 forecast = float(str(row["Forecast"]).strip("%")) if "%" in str(row["Forecast"]) else float(row["Forecast"])
                 prior = float(str(row["Prior"]).strip("%")) if "%" in str(row["Prior"]) else float(row["Prior"])
                 if abs(forecast - prior) > 0.5:
                     event_impact_score += 1
-        except Exception as e:
+        except:
             continue
     if high_impact_event_near:
         event_warning = f"⚠️ High-impact event within {event_window} days of expiry. Prefer defined-risk strategies."
     if event_impact_score > 0:
         rationale.append(f"High-impact events with significant forecast deviations ({event_impact_score} events).")
-    expected_move_pct = (straddle_price / spot_price) * 100
+    expected_move_pct = round(expected_move, 2)
     if regime_label == "🔥 High Vol Trend":
-        if high_impact_event_near or event_impact_score > 0:
-            strategies = ["Iron Fly", "Wide Strangle"]
-            rationale.append("High volatility with major event — use defined-risk structures.")
-        else:
-            strategies = ["Iron Fly", "Wide Strangle"]
-            rationale.append("Strong IV premium — neutral strategies for premium capture.")
+        strategies = ["Iron Fly", "Wide Strangle"]
+        rationale.append("Strong IV premium — neutral strategies for premium capture.")
     elif regime_label == "🚧 Elevated Volatility":
         strategies = ["Iron Condor", "Jade Lizard"]
         rationale.append("Volatility above average — range-bound strategies offer favorable reward-risk.")
     elif regime_label == "😴 Neutral Volatility":
-        if days_to_expiry >= 3:
-            strategies = ["Jade Lizard", "Bull Put Spread"]
-            rationale.append("Market balanced — slight directional bias strategies offer edge.")
-        else:
-            strategies = ["Iron Fly"]
-            rationale.append("Tight expiry — quick theta-based capture via short Iron Fly.")
+        strategies = ["Jade Lizard", "Bull Put Spread"]
+        rationale.append("Market balanced — slight directional bias strategies offer edge.")
     elif regime_label == "💤 Low Volatility":
-        if days_to_expiry > 7:
-            strategies = ["Straddle", "Calendar Spread"]
-            rationale.append("Low IV with longer expiry — benefit from potential IV increase.")
-        else:
-            strategies = ["Straddle", "ATM Strangle"]
-            rationale.append("Low IV — premium collection favorable but monitor for breakout risk.")
+        strategies = ["Straddle", "Calendar Spread"]
+        rationale.append("Low IV — premium collection favorable but monitor for breakout risk.")
     if event_impact_score > 0 and not high_impact_event_near:
         strategies = [s for s in strategies if "Iron" in s or "Lizard" in s or "Spread" in s]
     if ivp > 85 and iv_minus_rv > 5:
-        rationale.append(f"Volatility overpriced (IVP: {ivp}%, IV-RV: {iv_minus_rv}%) — ideal for selling premium.")
+        rationale.append(f"Volatility overpriced (IVP: {ivp}%, IV-RV: {iv_minus_rv}%): Ideal for selling premium.")
     elif ivp < 30:
-        rationale.append(f"Volatility underpriced (IVP: {ivp}%) — avoid unhedged selling.")
+        rationale.append(f"Volatility underpriced (IVP: {ivp}%): Avoid unhedged selling.")
     rationale.append(f"Expected move: ±{expected_move_pct:.2f}% based on straddle price.")
     return strategies, " | ".join(rationale), event_warning
 
@@ -379,7 +355,7 @@ def calculate_sharpe_ratio():
         risk_free_rate = 0.06 / 252
         sharpe_ratio = (annual_return - risk_free_rate) / annual_volatility
         return round(sharpe_ratio, 2)
-    except Exception as e:
+    except:
         return 0
 
 
@@ -393,7 +369,6 @@ def evaluate_full_risk(trades_df, config, regime_label, vix):
         total_cap_used = 0
         total_risk_used = 0
         total_realized_pnl = 0
-        total_vega = 0
         flags = []
         for _, row in trades_df.iterrows():
             strat = row["strategy"]
@@ -402,7 +377,6 @@ def evaluate_full_risk(trades_df, config, regime_label, vix):
             pnl = row["realized_pnl"]
             sl_hit = row["sl_hit"]
             trades_today = row["trades_today"]
-            vega = row["vega"]
             cfg = config['risk_config'].get(strat, {"capital_pct": 0.1, "risk_per_trade_pct": 0.01})
             risk_factor = 1.2 if regime_label == "🔥 High Vol Trend" else 0.8 if regime_label == "💤 Low Volatility" else 1.0
             max_cap = cfg["capital_pct"] * config['total_capital']
@@ -416,13 +390,11 @@ def evaluate_full_risk(trades_df, config, regime_label, vix):
                 "Potential Risk": potential_risk,
                 "Risk Limit": round(max_risk),
                 "P&L": pnl,
-                "Vega": vega,
                 "Risk OK?": "✅" if risk_ok else "❌"
             })
             total_cap_used += capital_used
             total_risk_used += potential_risk
             total_realized_pnl += pnl
-            total_vega += vega
             if not risk_ok:
                 flags.append(f"❌ {strat} exceeded risk limit")
             if sl_hit and trades_today > 3:
@@ -431,7 +403,7 @@ def evaluate_full_risk(trades_df, config, regime_label, vix):
         exposure_pct = round(total_cap_used / config['total_capital'] * 100, 2) if config['total_capital'] else 0
         risk_pct = round(total_risk_used / config['total_capital'] * 100, 2) if config['total_capital'] else 0
         dd_pct = round(net_dd / config['total_capital'] * 100, 2) if config['total_capital'] else 0
-        portfolio_summary = {
+        return pd.DataFrame(strategy_summary), {
             "Total Capital": config['total_capital'],
             "Capital Deployed": total_cap_used,
             "Exposure %": exposure_pct,
@@ -442,11 +414,9 @@ def evaluate_full_risk(trades_df, config, regime_label, vix):
             "Realized P&L": total_realized_pnl,
             "Drawdown ₹": net_dd,
             "Drawdown %": dd_pct,
-            "Portfolio Vega": round(total_vega, 2),
             "Max Drawdown Allowed": max_drawdown,
             "Flags": flags
         }
-        return pd.DataFrame(strategy_summary), portfolio_summary
     except Exception as e:
         return pd.DataFrame(), {}
 
@@ -462,6 +432,197 @@ def find_option_by_strike(option_chain, strike, option_type):
         return None
     except Exception as e:
         return None
+
+
+def get_strategy_details(strategy_name, option_chain, spot_price, config, lots=1):
+    def _iron_fly_calc(option_chain, spot_price, config, lots):
+        atm = min(option_chain, key=lambda x: abs(x["strike_price"] - spot_price))
+        strike = atm["strike_price"]
+        wing = 100
+        ce_short_opt = find_option_by_strike(option_chain, strike, "CE")
+        pe_short_opt = find_option_by_strike(option_chain, strike, "PE")
+        ce_long_opt = find_option_by_strike(option_chain, strike + wing, "CE")
+        pe_long_opt = find_option_by_strike(option_chain, strike - wing, "PE")
+        if not all([ce_short_opt, pe_short_opt, ce_long_opt, pe_long_opt]):
+            return None
+        orders = [
+            {"instrument_key": ce_short_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "SELL"},
+            {"instrument_key": pe_short_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "SELL"},
+            {"instrument_key": ce_long_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "BUY"},
+            {"instrument_key": pe_long_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "BUY"}
+        ]
+        return {"strategy": "Iron Fly", "strikes": [strike, strike, strike + wing, strike - wing], "orders": orders}
+
+    def _iron_condor_calc(option_chain, spot_price, config, lots):
+        atm = min(option_chain, key=lambda x: abs(x["strike_price"] - spot_price))
+        short_wing_distance = 100
+        long_wing_distance = 200
+        ce_short_strike = atm["strike_price"] + short_wing_distance
+        pe_short_strike = atm["strike_price"] - short_wing_distance
+        ce_long_strike = atm["strike_price"] + long_wing_distance
+        pe_long_strike = atm["strike_price"] - long_wing_distance
+        ce_short_opt = find_option_by_strike(option_chain, ce_short_strike, "CE")
+        pe_short_opt = find_option_by_strike(option_chain, pe_short_strike, "PE")
+        ce_long_opt = find_option_by_strike(option_chain, ce_long_strike, "CE")
+        pe_long_opt = find_option_by_strike(option_chain, pe_long_strike, "PE")
+        if not all([ce_short_opt, pe_short_opt, ce_long_opt, pe_long_opt]):
+            return None
+        orders = [
+            {"instrument_key": ce_short_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "SELL"},
+            {"instrument_key": pe_short_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "SELL"},
+            {"instrument_key": ce_long_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "BUY"},
+            {"instrument_key": pe_long_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "BUY"}
+        ]
+        return {"strategy": "Iron Condor", "strikes": [ce_short_strike, pe_short_strike, ce_long_strike, pe_long_strike], "orders": orders}
+
+    def _jade_lizard_calc(option_chain, spot_price, config, lots):
+        atm = min(option_chain, key=lambda x: abs(x["strike_price"] - spot_price))
+        call_strike = atm["strike_price"] + 50
+        put_strike = atm["strike_price"]
+        put_long_strike = atm["strike_price"] - 100
+        ce_short_opt = find_option_by_strike(option_chain, call_strike, "CE")
+        pe_short_opt = find_option_by_strike(option_chain, put_strike, "PE")
+        pe_long_opt = find_option_by_strike(option_chain, put_long_strike, "PE")
+        if not all([ce_short_opt, pe_short_opt, pe_long_opt]):
+            return None
+        orders = [
+            {"instrument_key": ce_short_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "SELL"},
+            {"instrument_key": pe_short_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "SELL"},
+            {"instrument_key": pe_long_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "BUY"}
+        ]
+        return {"strategy": "Jade Lizard", "strikes": [call_strike, put_strike, put_long_strike], "orders": orders}
+
+    def _straddle_calc(option_chain, spot_price, config, lots):
+        atm = min(option_chain, key=lambda x: abs(x["strike_price"] - spot_price))
+        strike = atm["strike_price"]
+        ce_short_opt = find_option_by_strike(option_chain, strike, "CE")
+        pe_short_opt = find_option_by_strike(option_chain, strike, "PE")
+        if not all([ce_short_opt, pe_short_opt]):
+            return None
+        orders = [
+            {"instrument_key": ce_short_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "SELL"},
+            {"instrument_key": pe_short_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "SELL"}
+        ]
+        return {"strategy": "Straddle", "strikes": [strike, strike], "orders": orders}
+
+    def _calendar_spread_calc(option_chain, spot_price, config, lots):
+        atm = min(option_chain, key=lambda x: abs(x["strike_price"] - spot_price))
+        strike = atm["strike_price"]
+        ce_short_opt = find_option_by_strike(option_chain, strike, "CE")
+        ce_long_opt = ce_short_opt
+        if not ce_short_opt:
+            return None
+        orders = [
+            {"instrument_key": ce_short_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "SELL"},
+            {"instrument_key": ce_long_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "BUY"}
+        ]
+        return {"strategy": "Calendar Spread", "strikes": [strike, strike], "orders": orders}
+
+    def _bull_put_spread_calc(option_chain, spot_price, config, lots):
+        atm = min(option_chain, key=lambda x: abs(x["strike_price"] - spot_price))
+        short_strike = atm["strike_price"] - 50
+        long_strike = atm["strike_price"] - 100
+        pe_short_opt = find_option_by_strike(option_chain, short_strike, "PE")
+        pe_long_opt = find_option_by_strike(option_chain, long_strike, "PE")
+        if not all([pe_short_opt, pe_long_opt]):
+            return None
+        orders = [
+            {"instrument_key": pe_short_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "SELL"},
+            {"instrument_key": pe_long_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "BUY"}
+        ]
+        return {"strategy": "Bull Put Spread", "strikes": [short_strike, long_strike], "orders": orders}
+
+    def _wide_strangle_calc(option_chain, spot_price, config, lots):
+        atm = min(option_chain, key=lambda x: abs(x["strike_price"] - spot_price))
+        call_strike = atm["strike_price"] + 100
+        put_strike = atm["strike_price"] - 100
+        ce_short_opt = find_option_by_strike(option_chain, call_strike, "CE")
+        pe_short_opt = find_option_by_strike(option_chain, put_strike, "PE")
+        if not all([ce_short_opt, pe_short_opt]):
+            return None
+        orders = [
+            {"instrument_key": ce_short_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "SELL"},
+            {"instrument_key": pe_short_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "SELL"}
+        ]
+        return {"strategy": "Wide Strangle", "strikes": [call_strike, put_strike], "orders": orders}
+
+    def _atm_strangle_calc(option_chain, spot_price, config, lots):
+        atm = min(option_chain, key=lambda x: abs(x["strike_price"] - spot_price))
+        call_strike = atm["strike_price"] + 50
+        put_strike = atm["strike_price"] - 50
+        ce_short_opt = find_option_by_strike(option_chain, call_strike, "CE")
+        pe_short_opt = find_option_by_strike(option_chain, put_strike, "PE")
+        if not all([ce_short_opt, pe_short_opt]):
+            return None
+        orders = [
+            {"instrument_key": ce_short_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "SELL"},
+            {"instrument_key": pe_short_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "SELL"}
+        ]
+        return {"strategy": "ATM Strangle", "strikes": [call_strike, put_strike], "orders": orders}
+
+    func_map = {
+        "Iron Fly": _iron_fly_calc,
+        "Iron Condor": _iron_condor_calc,
+        "Jade Lizard": _jade_lizard_calc,
+        "Straddle": _straddle_calc,
+        "Calendar Spread": _calendar_spread_calc,
+        "Bull Put Spread": _bull_put_spread_calc,
+        "Wide Strangle": _wide_strangle_calc,
+        "ATM Strangle": _atm_strangle_calc
+    }
+
+    if strategy_name not in func_map:
+        return None
+
+    detail = func_map[strategy_name](option_chain, spot_price, config, lots)
+    if not detail:
+        return None
+
+    instrument_keys = [order["instrument_key"] for order in detail["orders"]]
+    current_greeks = get_option_greeks(config, instrument_keys)
+
+    updated_orders = []
+    prices = {}
+    for order in detail["orders"]:
+        key = order["instrument_key"]
+        ltp = current_greeks.get(key, {}).get("last_price", 0)
+        prices[key] = ltp
+        updated_orders.append({**order, "current_price": ltp})
+
+    detail["orders"] = updated_orders
+    detail["pricing"] = prices
+
+    premium = 0
+    for order in detail["orders"]:
+        qty = order["quantity"]
+        price = order["current_price"]
+        if order["transaction_type"] == "SELL":
+            premium += price * qty
+        else:
+            premium -= price * qty
+    detail["premium_total"] = premium
+    detail["premium"] = premium / config["lot_size"]
+
+    strategy = detail["strategy"]
+    if strategy == "Iron Fly":
+        wing_width = abs(detail["strikes"][0] - detail["strikes"][2])
+        detail["max_loss"] = (wing_width - detail["premium"]) * config["lot_size"] * lots if premium > 0 else float('inf')
+    elif strategy == "Iron Condor":
+        wing_width = abs(detail["strikes"][2] - detail["strikes"][0])
+        detail["max_loss"] = (wing_width - detail["premium"]) * config["lot_size"] * lots if premium > 0 else float('inf')
+    elif strategy == "Jade Lizard":
+        wing_width = abs(detail["strikes"][1] - detail["strikes"][2])
+        detail["max_loss"] = (wing_width - detail["premium"]) * config["lot_size"] * lots if premium > 0 else float('inf')
+    elif strategy == "Bull Put Spread":
+        wing_width = abs(detail["strikes"][0] - detail["strikes"][1])
+        detail["max_loss"] = (wing_width - detail["premium"]) * config["lot_size"] * lots if premium > 0 else float('inf')
+    elif strategy in ["Straddle", "Wide Strangle", "ATM Strangle"]:
+        detail["max_loss"] = float("inf")
+    elif strategy == "Calendar Spread":
+        detail["max_loss"] = detail["premium"]
+        detail["max_profit"] = float("inf")
+    detail["max_profit"] = detail["premium_total"] if strategy != "Calendar Spread" else float("inf")
+    return detail
 
 
 def place_order(config, instrument_key, quantity, transaction_type, order_type="MARKET", price=0):
@@ -483,25 +644,11 @@ def place_order(config, instrument_key, quantity, transaction_type, order_type="
         if res.status_code == 200:
             data = res.json()
             if data.get("status") == "success":
-                order_data = data.get("data", {})
-                if "order_ids" in order_data and order_data["order_ids"]:
-                    return order_data["order_ids"][0]
-                elif "order_id" in order_data:
-                    return order_data["order_id"]
-                return None
-            return None
-        elif res.status_code == 400:
-            data = res.json()
-            errors = data.get("errors", [])
-            for error in errors:
-                if error.get("errorCode") == "UDAPI100060":
-                    return None
-                else:
-                    return None
-            return None
-        return None
+                return data.get("data", {}).get("order_id", "Success")
+            return data.get("data", {}).get("order_ids", ["Error"])[0]
+        return f"Error {res.status_code}: {res.text}"
     except Exception as e:
-        return None
+        return f"Exception: {e}"
 
 
 def exit_all_positions(config):
@@ -511,17 +658,7 @@ def exit_all_positions(config):
         if res.status_code == 200:
             data = res.json()
             if data.get("status") == "success":
-                order_ids = data.get("data", {}).get("order_ids", [])
-                return order_ids
-            return []
-        elif res.status_code == 400:
-            errors = res.json().get("errors", [])
-            for error in errors:
-                if error.get("errorCode") in ["UDAPI1108", "UDAPI1109"]:
-                    return []
-                else:
-                    return []
-            return []
+                return data.get("data", {}).get("order_ids", [])
         return []
     except Exception as e:
         return []
@@ -531,207 +668,6 @@ def logout(config):
     try:
         url = f"{config['base_url']}/logout"
         res = requests.delete(url, headers=config['headers'])
-        if res.status_code == 200:
-            return True
-        return False
+        return res.status_code == 200
     except Exception as e:
         return False
-
-
-def get_strategy_details(strategy_name, option_chain, spot_price, config, lots=1):
-    func_map = {
-        "Iron Fly": _iron_fly_calc,
-        "Iron Condor": _iron_condor_calc,
-        "Jade Lizard": _jade_lizard_calc,
-        "Straddle": _straddle_calc,
-        "Calendar Spread": _calendar_spread_calc,
-        "Bull Put Spread": _bull_put_spread_calc,
-        "Wide Strangle": _wide_strangle_calc,
-        "ATM Strangle": _atm_strangle_calc
-    }
-    if strategy_name not in func_map:
-        return None
-    detail = func_map[strategy_name](option_chain, spot_price, config, lots)
-    if detail:
-        instrument_keys = [order["instrument_key"] for order in detail["orders"]]
-        current_greeks = get_option_greeks(config, instrument_keys)
-        updated_orders = []
-        prices = {}
-        for order in detail["orders"]:
-            key = order["instrument_key"]
-            ltp = current_greeks.get(key, {}).get("last_price", 0)
-            prices[key] = ltp
-            updated_orders.append({**order, "current_price": ltp})
-        detail["orders"] = updated_orders
-        detail["pricing"] = prices
-        premium = 0
-        for order in detail["orders"]:
-            price = order["current_price"]
-            qty = order["quantity"]
-            if order["transaction_type"] == "SELL":
-                premium += price * qty
-            else:
-                premium -= price * qty
-        detail["premium"] = premium / config["lot_size"]
-        detail["premium_total"] = premium
-        if strategy_name == "Iron Fly":
-            wing_width = abs(detail["strikes"][0] - detail["strikes"][2])
-            detail["max_loss"] = (wing_width - detail["premium"]) * config["lot_size"] * lots if premium > 0 else float('inf')
-        elif strategy_name == "Iron Condor":
-            wing_width = abs(detail["strikes"][2] - detail["strikes"][0])
-            detail["max_loss"] = (wing_width - detail["premium"]) * config["lot_size"] * lots if premium > 0 else float('inf')
-        elif strategy_name == "Jade Lizard":
-            wing_width = abs(detail["strikes"][1] - detail["strikes"][2])
-            detail["max_loss"] = (wing_width - detail["premium"]) * config["lot_size"] * lots if premium > 0 else float('inf')
-        elif strategy_name == "Bull Put Spread":
-            wing_width = abs(detail["strikes"][0] - detail["strikes"][1])
-            detail["max_loss"] = (wing_width - detail["premium"]) * config["lot_size"] * lots if premium > 0 else float('inf')
-        elif strategy_name in ["Straddle", "Wide Strangle", "ATM Strangle"]:
-            detail["max_loss"] = float("inf")
-        elif strategy_name == "Calendar Spread":
-            detail["max_loss"] = detail["premium"]
-            detail["max_profit"] = float("inf")
-        detail["max_profit"] = detail["premium_total"] if strategy_name not in ["Calendar Spread"] else float("inf")
-    return detail
-
-
-def _iron_fly_calc(option_chain, spot_price, config, lots):
-    atm = min(option_chain, key=lambda x: abs(x["strike_price"] - spot_price))
-    strike = atm["strike_price"]
-    wing = 100
-    ce_short_opt = find_option_by_strike(option_chain, strike, "CE")
-    pe_short_opt = find_option_by_strike(option_chain, strike, "PE")
-    ce_long_opt = find_option_by_strike(option_chain, strike + wing, "CE")
-    pe_long_opt = find_option_by_strike(option_chain, strike - wing, "PE")
-    if not all([ce_short_opt, pe_short_opt, ce_long_opt, pe_long_opt]):
-        return None
-    orders = [
-        {"instrument_key": ce_short_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "SELL"},
-        {"instrument_key": pe_short_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "SELL"},
-        {"instrument_key": ce_long_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "BUY"},
-        {"instrument_key": pe_long_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "BUY"}
-    ]
-    return {"strategy": "Iron Fly", "strikes": [strike, strike, strike + wing, strike - wing],
-            "premium": 0, "max_loss": 0, "max_profit": 0, "orders": orders}
-
-
-def _iron_condor_calc(option_chain, spot_price, config, lots):
-    atm = min(option_chain, key=lambda x: abs(x["strike_price"] - spot_price))
-    short_wing_distance = 100
-    long_wing_distance = 200
-    ce_short_strike = atm["strike_price"] + short_wing_distance
-    pe_short_strike = atm["strike_price"] - short_wing_distance
-    ce_long_strike = atm["strike_price"] + long_wing_distance
-    pe_long_strike = atm["strike_price"] - long_wing_distance
-    ce_short_opt = find_option_by_strike(option_chain, ce_short_strike, "CE")
-    pe_short_opt = find_option_by_strike(option_chain, pe_short_strike, "PE")
-    ce_long_opt = find_option_by_strike(option_chain, ce_long_strike, "CE")
-    pe_long_opt = find_option_by_strike(option_chain, pe_long_strike, "PE")
-    if not all([ce_short_opt, pe_short_opt, ce_long_opt, pe_long_opt]):
-        return None
-    orders = [
-        {"instrument_key": ce_short_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "SELL"},
-        {"instrument_key": pe_short_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "SELL"},
-        {"instrument_key": ce_long_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "BUY"},
-        {"instrument_key": pe_long_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "BUY"}
-    ]
-    return {"strategy": "Iron Condor", "strikes": [ce_short_strike, pe_short_strike, ce_long_strike, pe_long_strike],
-            "premium": 0, "max_loss": 0, "max_profit": 0, "orders": orders}
-
-
-def _jade_lizard_calc(option_chain, spot_price, config, lots):
-    atm = min(option_chain, key=lambda x: abs(x["strike_price"] - spot_price))
-    call_strike = atm["strike_price"] + 50
-    put_strike = atm["strike_price"]
-    put_long_strike = atm["strike_price"] - 100
-    ce_short_opt = find_option_by_strike(option_chain, call_strike, "CE")
-    pe_short_opt = find_option_by_strike(option_chain, put_strike, "PE")
-    pe_long_opt = find_option_by_strike(option_chain, put_long_strike, "PE")
-    if not all([ce_short_opt, pe_short_opt, pe_long_opt]):
-        return None
-    orders = [
-        {"instrument_key": ce_short_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "SELL"},
-        {"instrument_key": pe_short_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "SELL"},
-        {"instrument_key": pe_long_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "BUY"}
-    ]
-    return {"strategy": "Jade Lizard", "strikes": [call_strike, put_strike, put_long_strike],
-            "premium": 0, "max_loss": 0, "max_profit": 0, "orders": orders}
-
-
-def _straddle_calc(option_chain, spot_price, config, lots):
-    atm = min(option_chain, key=lambda x: abs(x["strike_price"] - spot_price))
-    strike = atm["strike_price"]
-    ce_short_opt = find_option_by_strike(option_chain, strike, "CE")
-    pe_short_opt = find_option_by_strike(option_chain, strike, "PE")
-    if not all([ce_short_opt, pe_short_opt]):
-        return None
-    orders = [
-        {"instrument_key": ce_short_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "SELL"},
-        {"instrument_key": pe_short_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "SELL"}
-    ]
-    return {"strategy": "Straddle", "strikes": [strike, strike],
-            "premium": 0, "max_loss": float("inf"), "max_profit": 0, "orders": orders}
-
-
-def _calendar_spread_calc(option_chain, spot_price, config, lots):
-    atm = min(option_chain, key=lambda x: abs(x["strike_price"] - spot_price))
-    strike = atm["strike_price"]
-    ce_short_opt = find_option_by_strike(option_chain, strike, "CE")
-    ce_long_opt = ce_short_opt
-    if not ce_short_opt:
-        return None
-    orders = [
-        {"instrument_key": ce_short_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "SELL"},
-        {"instrument_key": ce_long_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "BUY"}
-    ]
-    return {"strategy": "Calendar Spread", "strikes": [strike, strike],
-            "premium": 0, "max_loss": 0, "max_profit": float("inf"), "orders": orders}
-
-
-def _bull_put_spread_calc(option_chain, spot_price, config, lots):
-    atm = min(option_chain, key=lambda x: abs(x["strike_price"] - spot_price))
-    short_strike = atm["strike_price"] - 50
-    long_strike = atm["strike_price"] - 100
-    pe_short_opt = find_option_by_strike(option_chain, short_strike, "PE")
-    pe_long_opt = find_option_by_strike(option_chain, long_strike, "PE")
-    if not all([pe_short_opt, pe_long_opt]):
-        return None
-    orders = [
-        {"instrument_key": pe_short_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "SELL"},
-        {"instrument_key": pe_long_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "BUY"}
-    ]
-    return {"strategy": "Bull Put Spread", "strikes": [short_strike, long_strike],
-            "premium": 0, "max_loss": 0, "max_profit": 0, "orders": orders}
-
-
-def _wide_strangle_calc(option_chain, spot_price, config, lots):
-    atm = min(option_chain, key=lambda x: abs(x["strike_price"] - spot_price))
-    call_strike = atm["strike_price"] + 100
-    put_strike = atm["strike_price"] - 100
-    ce_short_opt = find_option_by_strike(option_chain, call_strike, "CE")
-    pe_short_opt = find_option_by_strike(option_chain, put_strike, "PE")
-    if not all([ce_short_opt, pe_short_opt]):
-        return None
-    orders = [
-        {"instrument_key": ce_short_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "SELL"},
-        {"instrument_key": pe_short_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "SELL"}
-    ]
-    return {"strategy": "Wide Strangle", "strikes": [call_strike, put_strike],
-            "premium": 0, "max_loss": float("inf"), "max_profit": 0, "orders": orders}
-
-
-def _atm_strangle_calc(option_chain, spot_price, config, lots):
-    atm = min(option_chain, key=lambda x: abs(x["strike_price"] - spot_price))
-    call_strike = atm["strike_price"] + 50
-    put_strike = atm["strike_price"] - 50
-    ce_short_opt = find_option_by_strike(option_chain, call_strike, "CE")
-    pe_short_opt = find_option_by_strike(option_chain, put_strike, "PE")
-    if not all([ce_short_opt, pe_short_opt]):
-        return None
-    orders = [
-        {"instrument_key": ce_short_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "SELL"},
-        {"instrument_key": pe_short_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "SELL"}
-    ]
-    return {"strategy": "ATM Strangle", "strikes": [call_strike, put_strike],
-            "premium": 0, "max_loss": float("inf"), "max_profit": 0, "orders": orders}
-
