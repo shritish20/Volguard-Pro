@@ -1056,64 +1056,62 @@ if st.session_state.logged_in and access_token:
             else:
                 st.error(f"⚠ No details found for {selected_strat}")
 
-    with tab6:
-        st.markdown("<h2 style='color: #1E90FF;'>🛡️ Risk Management Dashboard</h2>", unsafe_allow_html=True)
-        col_r1, col_r2, col_r3, col_r4 = st.columns(4)
-        with col_r1:
-            st.markdown(f"<div class='metric-box'><h3>Total Risk</h3><div class='value'>₹{portfolio_summary['Risk on Table']:.2f}</div></div>", unsafe_allow_html=True)
-        with col_r2:
-            st.markdown(f"<div class='metric-box'><h3>Sharpe Ratio</h3><div class='value'>{sharpe_ratio:.2f}</div></div>", unsafe_allow_html=True)
-        with col_r3:
-            margin_pct = (funds_data["used_margin"] / funds_data["total_funds"] * 100) if funds_data["total_funds"] > 0 else 0
-            st.markdown(f"<div class='metric-box'><h3>Margin Utilization</h3><div class='value'>{margin_pct:.2f}%</div></div>", unsafe_allow_html=True)
-        with col_r4:
-            st.markdown(f"<div class='metric-box'><h3>Max Drawdown</h3><div class='value'>₹{portfolio_summary['Max Drawdown Allowed']:.2f}</div></div>", unsafe_allow_html=True)
-        st.subheader("Greeks Exposure")
-        total_delta, total_theta, total_vega, total_gamma = 0.0, 0.0, 0.0, 0.0
-        for pos in trades_df.to_dict("records"):
-            try:
-                instrument_key = pos.get("instrument_token", "")
-                greeks = get_option_greeks(config, [instrument_key]).get(instrument_key, {})
-                total_delta += greeks.get("delta", 0) * pos.get("capital_used", 0)
-                total_theta += greeks.get("theta", 0) * pos.get("capital_used", 0)
-                total_vega += greeks.get("vega", 0) * pos.get("capital_used", 0)
-                total_gamma += greeks.get("gamma", 0) * pos.get("capital_used", 0)
-            except Exception as e:
-                st.warning(f"Error calculating Greeks: {e}")
-                continue
-        col_g1, col_g2, col_g3, col_g4 = st.columns(4)
-        with col_g1:
-            st.markdown(f"<div class='metric-box'><h4>Delta</h4>{total_delta:.2f}</div>", unsafe_allow_html=True)
-        with col_g2:
-            st.markdown(f"<div class='metric-box'><h4>Theta</h4>₹{total_theta:.2f}</div>", unsafe_allow_html=True)
-        with col_g3:
-            st.markdown(f"<div class='metric-box'><h4>Vega</h4>₹{total_vega:.2f}</div>", unsafe_allow_html=True)
-            if total_vega > 1000:
-                st.error("⚠ High Vega exposure! Risk of volatility spike.")
-        with col_g4:
-            st.markdown(f"<div class='metric-box'><h4>Gamma</h4>{total_gamma:.6f}</div>", unsafe_allow_html=True)
-        st.subheader("Capital Allocation")
-        plot_allocation_pie(strategy_df, config)
-        st.subheader("Drawdown Control")
-        plot_drawdown_trend(portfolio_summary)
-        max_drawdown_limit = 0.05 if vix > 20 else 0.03 if vix > 12 else 0.02
-        if portfolio_summary["Drawdown %"] > max_drawdown_limit * 100:
-            st.error(f"⚠ Drawdown ({portfolio_summary['Drawdown %']:.2f}%) exceeds limit ({max_drawdown_limit*100:.2f}%)!")
-
-        st.subheader("All Positions")
-        if not trades_df.empty:
-           pos_df = trades_df[["strategy", "capital_used", "realized_pnl"]]
-           pos_df.columns = ["Strategy", "Capital Used", "P&L"]
-    
-           formatted_pos_df = pos_df.style.format({
-           "Capital Used": "{:.2f}",
-           "P&L": "{:.2f}"
-           }).set_properties(**{"background-color": "#1A1C24", "color": "white"})
-
+with tab6:
+    st.markdown("<h2 style='color: #1E90FF;'>🛡️ Risk Management Dashboard</h2>", unsafe_allow_html=True)
+    col_r1, col_r2, col_r3, col_r4 = st.columns(4)
+    with col_r1:
+        st.markdown(f"<div class='metric-box'><h3>Total Risk</h3><div class='value'>₹{portfolio_summary['Risk on Table']:.2f}</div></div>", unsafe_allow_html=True)
+    with col_r2:
+        st.markdown(f"<div class='metric-box'><h3>Sharpe Ratio</h3><div class='value'>{sharpe_ratio:.2f}</div></div>", unsafe_allow_html=True)
+    with col_r3:
+        margin_pct = (funds_data["used_margin"] / funds_data["total_funds"] * 100) if funds_data["total_funds"] > 0 else 0
+        st.markdown(f"<div class='metric-box'><h3>Margin Utilization</h3><div class='value'>{margin_pct:.2f}%</div></div>", unsafe_allow_html=True)
+    with col_r4:
+        st.markdown(f"<div class='metric-box'><h3>Max Drawdown</h3><div class='value'>₹{portfolio_summary['Max Drawdown Allowed']:.2f}</div></div>", unsafe_allow_html=True)
+    st.subheader("Greeks Exposure")
+    total_delta, total_theta, total_vega, total_gamma = 0.0, 0.0, 0.0, 0.0
+    for pos in trades_df.to_dict("records"):
+        try:
+            instrument_key = pos.get("instrument_token", "")
+            greeks = get_option_greeks(config, [instrument_key]).get(instrument_key, {})
+            total_delta += greeks.get("delta", 0) * pos.get("capital_used", 0)
+            total_theta += greeks.get("theta", 0) * pos.get("capital_used", 0)
+            total_vega += greeks.get("vega", 0) * pos.get("capital_used", 0)
+            total_gamma += greeks.get("gamma", 0) * pos.get("capital_used", 0)
+        except Exception as e:
+            st.warning(f"Error calculating Greeks: {e}")
+            continue
+    col_g1, col_g2, col_g3, col_g4 = st.columns(4)
+    with col_g1:
+        st.markdown(f"<div class='metric-box'><h4>Delta</h4>{total_delta:.2f}</div>", unsafe_allow_html=True)
+    with col_g2:
+        st.markdown(f"<div class='metric-box'><h4>Theta</h4>₹{total_theta:.2f}</div>", unsafe_allow_html=True)
+    with col_g3:
+        st.markdown(f"<div class='metric-box'><h4>Vega</h4>₹{total_vega:.2f}</div>", unsafe_allow_html=True)
+        if total_vega > 1000:
+            st.error("⚠ High Vega exposure! Risk of volatility spike.")
+    with col_g4:
+        st.markdown(f"<div class='metric-box'><h4>Gamma</h4>{total_gamma:.6f}</div>", unsafe_allow_html=True)
+    st.subheader("Capital Allocation")
+    plot_allocation_pie(strategy_df, config)
+    st.subheader("Drawdown Control")
+    plot_drawdown_trend(portfolio_summary)
+    max_drawdown_limit = 0.05 if vix > 20 else 0.03 if vix > 12 else 0.02
+    if portfolio_summary["Drawdown %"] > max_drawdown_limit * 100:
+        st.error(f"⚠ Drawdown ({portfolio_summary['Drawdown %']:.2f}%) exceeds limit ({max_drawdown_limit*100:.2f}%)!")
+    st.subheader("All Positions")
+    if not trades_df.empty:
+        pos_df = trades_df[["strategy", "capital_used", "realized_pnl"]]
+        pos_df.columns = ["Strategy", "Capital Used", "P&L"]
+        formatted_pos_df = pos_df.style.format({
+            "Capital Used": "{:.2f}",
+            "P&L": "{:.2f}"
+        }).set_properties(**{"background-color": "#1A1C24", "color": "white"})
         st.dataframe(formatted_pos_df, use_container_width=True)
     else:
-          st.info("No open positions or trade history found.")
-     st.subheader("Risk Actions")
-     if st.button("Exit All Positions", key="exit_all_pos"):
-     if st.checkbox("Confirm Exit All Positions", key="confirm_exit"):
-                exit_all_positions(config)
+        st.info("No open positions or trade history found.")
+    st.subheader("Risk Actions")
+    if st.button("Exit All Positions", key="exit_all_pos"):
+        if st.checkbox("Confirm Exit All Positions", key="confirm_exit"):
+            exit_all_positions(config)
+    
