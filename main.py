@@ -1415,7 +1415,6 @@ if st.session_state.logged_in and access_token:
             )
         st.subheader("Greeks Exposure")
         total_delta, total_theta, total_vega, total_gamma = 0.0, 0.0, 0.0, 0.0
-        for pos in positions:
             try:
                 instrument_key = pos.get("instrument_token", "")
                 greeks = get_option_greeks(config, [instrument_key]).get(instrument_key, {})
