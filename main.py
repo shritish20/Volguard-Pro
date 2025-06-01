@@ -1151,8 +1151,8 @@ if st.session_state.logged_in and access_token:
 
         st.dataframe(formatted_pos_df, use_container_width=True)
         else:
-            st.info("No open positions.")
-            st.subheader("Risk Actions")
-            if st.button("Exit All Positions", key="exit_all_pos"):
-            if st.checkbox("Confirm Exit All Positions", key="confirm_exit"):
+              st.info("No open positions.")
+        st.subheader("Risk Actions")
+        if st.button("Exit All Positions", key="exit_all_pos"):
+           if st.checkbox("Confirm Exit All Positions", key="confirm_exit"):
                 exit_all_positions(config)
