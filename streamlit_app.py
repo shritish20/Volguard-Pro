@@ -397,7 +397,7 @@ if st.session_state['authenticated']:
     # Strategy Details
     with tabs[2]:
         st.header("Strategies")
-        if st.button("Refresh", key="strategy_refresh"):
+        if st.button("Refresh", key="refresh_strategies"):
             st.session_state['data_fetched'] = False
             fetch_all_data()
             st.rerun()
@@ -414,7 +414,8 @@ if st.session_state['authenticated']:
         st.subheader("All Strategies")
         for detail in st.session_state['all_strategy_details']:
             with st.expander(f"{detail['strategy']}"):
-                st.markdown(f"**Premium**: ₹{detail['premium']:.2f}")
+                st.write(f"**Strikes**: {detail['strikes']}")
+                st.write(f"**Premium**: ₹{detail['premium']:.2f}")
                 st.write(f"**Max Profit**: ₹{detail['max_profit']:.2f}")
                 st.write(f"**Max Loss**: {'Unlimited' if detail['max_loss'] == float('inf') else f'₹{detail['max_loss']:.2f}'}")
                 st.write(f"**Margin**: {'N/A' if not detail['estimated_margin'] else f'₹{detail['estimated_margin']:.2f}'}")
@@ -427,26 +428,27 @@ if st.session_state['authenticated']:
             fetch_all_data()
             st.rerun()
         
-        st.subheader("Order Details")
-        strategy_options = [d['strategy'] in st.session_state['all_strategy_details']]
-        selected_strategy = st.selectbox("Strategy", strategy_options, key="strategy_select")
+        st.subheader("Select Strategy")
+        strategy_options = [detail['strategy'] for detail in st.session_state['all_strategy_details']]
+        selected_strategy = st.selectbox("Strategy:", strategy_options, key="strategy_select")
         
         if selected_strategy:
             detail = next((d for d in st.session_state['all_strategy_details'] if d['strategy'] == selected_strategy), None)
             if detail:
-                st.markdown(f"**Premium**: ₹{detail['premium']:.2f}")
+                st.write(f"**Strikes**: {detail['strikes']}")
+                st.write(f"**Premium**: ₹{detail['premium']:.2f}")
                 st.write(f"**Max Profit**: ₹{detail['max_profit']:.2f}")
                 st.write(f"**Max Loss**: {'Unlimited' if detail['max_loss'] == float('inf') else f'₹{detail['max_loss']:.2f}'}")
                 st.write(f"**Margin**: {'N/A' if not detail['estimated_margin'] else f'₹{detail['estimated_margin']:.2f}'}")
                 
                 proceed = True
                 if detail['estimated_margin'] and detail['estimated_margin'] > st.session_state['current_available_funds']:
-                    st.warning(f"Insufficient funds: Required: ₹{detail['estimated_margin']:.2f}, Available: ₹{st.session_state['current_available_funds']:.2f}")
+                    st.warning(f"Insufficient funds: Required ₹{detail['estimated_margin']:.2f}, Available: ₹{st.session_state['current_available_funds']:.2f}")
                     proceed = st.checkbox("Proceed anyway?", key="proceed_check")
                 
                 if st.button("Place Order", key="place_order"):
                     if not proceed:
-                        st.error("Order cancelled.")
+                        st.error("Order cancelled due to insufficient funds.")
                     else:
                         with st.spinner("Placing order..."):
                             order_ids = []
@@ -461,14 +463,14 @@ if st.session_state['authenticated']:
                                 )
                                 if order_id:
                                     order_ids.append(order_id)
-                                    st.write(f"Buy: {order_id} for {order['instrument_key']}")
+                                    st.write(f"Buy Order: {order_id} for {order['instrument_key']} (Qty: {order['quantity']})")
                                 else:
                                     failed_orders.append(order["instrument_key"])
                             if buy_legs and not order_ids:
-                                st.error(f"Buy orders failed for {detail['strategy']}.")
+                                st.error(f"All BUY orders failed for {detail['strategy']}.")
                             else:
                                 if buy_legs:
-                                    st.write("Waiting for BUY legs...")
+                                    st.write("Waiting for BUY legs to fill...")
                                     all_filled = False
                                     start_time = time.time()
                                     while not all_filled and (time.time() - start_time) < 120:
@@ -479,21 +481,21 @@ if st.session_state['authenticated']:
                                             if not order or order.get('status') not in ["COMPLETE", "FILLED"]:
                                                 all_filled = False
                                                 if order and order.get('status') in ["CANCELLED", "REJECTED"]:
-                                                    st.error(f"Buy {oid} {order['status']}: {order.get('status_message', '')}")
+                                                    st.error(f"Buy order {oid} {order.get('status')}: {order.get('status_message', '')}")
                                                     all_filled = False
                                                     break
                                         time.sleep(1)
                                     if not all_filled:
-                                        st.error("Timeout for BUY legs.")
+                                        st.error("Timeout waiting for BUY legs. Aborting.")
                                     else:
-                                        st.success("BUY legs filled!")
+                                        st.success("All BUY legs filled!")
                                         funds_info = App.get_user_funds_and_margin(st.session_state['config'], segment="SEC") or {}
                                         current_funds = funds_info.get('available_margin', 0.0)
                                         if current_funds < 0:
-                                            st.warning("Low funds after BUY.")
-                                            if not st.checkbox("Proceed with SELL?", key="sell_proceed"):
+                                            st.warning("Low funds after BUY legs.")
+                                            if not st.checkbox("Proceed with SELL legs?", key="sell_proceed"):
                                                 st.error("Order cancelled.")
-                                                return
+                                                sell_legs = []
                             
                             sell_legs = [order for order in detail["orders"] if order["transaction_type"] == "SELL"]
                             for order in sell_legs:
@@ -505,14 +507,14 @@ if st.session_state['authenticated']:
                                 )
                                 if order_id:
                                     order_ids.append(order_id)
-                                    st.write(f"Sell: {order_id} for {order['instrument_key']}")
+                                    st.write(f"Sell Order: {order_id} for {order['instrument_key']} (Qty: {order['quantity']})")
                                 else:
                                     failed_orders.append(order["instrument_key"])
                             
                             if order_ids:
-                                st.success(f"Placed {len(order_ids)} orders.")
+                                st.success(f"Placed {len(order_ids)} orders for {detail['strategy']}.")
                                 if failed_orders:
-                                    st.warning(f"Failed: {failed_orders}")
+                                    st.warning(f"{len(failed_orders)} orders failed: {failed_orders}")
                             else:
                                 st.error(f"All orders failed for {detail['strategy']}.")
     
