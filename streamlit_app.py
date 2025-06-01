@@ -387,8 +387,8 @@ if st.session_state['authenticated']:
             st.subheader("ATM ±300 Chain")
             st.dataframe(st.session_state['full_chain_df'])
             eff_df = st.session_state['full_chain_df'].copy()
-            eff_df["Theta/Vega"] = eff_df.apply(lambda row: row["Total Theta"] / row["Total Vega"] if row["Total Vega"] != 0 else float('0.0'), axis=1)
-            eff_df = eff_df["Strike", "Total Theta", "Total Vega", "Theta/Vega"].sort_values("Theta/Vega", ascending=False).dropna()
+            eff_df["Theta/Vega"] = eff_df.apply(lambda row: row["Total Theta"] / row["Total Vega"] if row["Total Vega"] != 0 else 0.0, axis=1)
+            eff_df = eff_df[["Strike", "Total Theta", "Total Vega", "Theta/Vega"]].sort_values("Theta/Vega", ascending=False).dropna()
             st.subheader("Theta/Vega Ranking")
             st.dataframe(eff_df)
         else:
@@ -397,7 +397,7 @@ if st.session_state['authenticated']:
     # Strategy Details
     with tabs[2]:
         st.header("Strategies")
-        if st.button("Refresh", key="refresh_strategies"):
+        if st.button("Refresh", key="strategy_refresh"):
             st.session_state['data_fetched'] = False
             fetch_all_data()
             st.rerun()
@@ -405,7 +405,8 @@ if st.session_state['authenticated']:
         st.subheader("Recommended Strategies")
         for detail in st.session_state['strategy_details']:
             with st.expander(f"{detail['strategy']}"):
-                st.markdown(f"**Premium**: ₹{detail['premium']:.2f}")
+                st.write(f"**Strikes**: {detail['strikes']}")
+                st.write(f"**Premium**: ₹{detail['premium']:.2f}")
                 st.write(f"**Max Profit**: ₹{detail['max_profit']:.2f}")
                 st.write(f"**Max Loss**: {'Unlimited' if detail['max_loss'] == float('inf') else f'₹{detail['max_loss']:.2f}'}")
                 st.write(f"**Margin**: {'N/A' if not detail['estimated_margin'] else f'₹{detail['estimated_margin']:.2f}'}")
@@ -426,9 +427,9 @@ if st.session_state['authenticated']:
             fetch_all_data()
             st.rerun()
         
-        st.subheader("Select Strategy")
-        strategy_options = [d['strategy'] for d in st.session_state['all_strategy_details']]
-        selected_strategy = st.selectbox("Strategy:", strategy_options, key="select_strategy")
+        st.subheader("Order Details")
+        strategy_options = [d['strategy'] in st.session_state['all_strategy_details']]
+        selected_strategy = st.selectbox("Strategy", strategy_options, key="strategy_select")
         
         if selected_strategy:
             detail = next((d for d in st.session_state['all_strategy_details'] if d['strategy'] == selected_strategy), None)
@@ -440,7 +441,7 @@ if st.session_state['authenticated']:
                 
                 proceed = True
                 if detail['estimated_margin'] and detail['estimated_margin'] > st.session_state['current_available_funds']:
-                    st.warning(f"Insufficient funds: Required ₹{detail['estimated_margin']:.2f}, Available: ₹{st.session_state['current_available_funds']:.2f}")
+                    st.warning(f"Insufficient funds: Required: ₹{detail['estimated_margin']:.2f}, Available: ₹{st.session_state['current_available_funds']:.2f}")
                     proceed = st.checkbox("Proceed anyway?", key="proceed_check")
                 
                 if st.button("Place Order", key="place_order"):
@@ -475,9 +476,9 @@ if st.session_state['authenticated']:
                                         all_filled = True
                                         for oid in order_ids:
                                             order = next((o for o in orders if o.get('order_id') == oid), None)
-                                            if not order or order.get('status') not in ['COMPLETE', 'FILLED']:
+                                            if not order or order.get('status') not in ["COMPLETE", "FILLED"]:
                                                 all_filled = False
-                                                if order and order.get('status') in ['CANCELLED', 'REJECTED']:
+                                                if order and order.get('status') in ["CANCELLED", "REJECTED"]:
                                                     st.error(f"Buy {oid} {order['status']}: {order.get('status_message', '')}")
                                                     all_filled = False
                                                     break
@@ -492,7 +493,7 @@ if st.session_state['authenticated']:
                                             st.warning("Low funds after BUY.")
                                             if not st.checkbox("Proceed with SELL?", key="sell_proceed"):
                                                 st.error("Order cancelled.")
-                                                sell_orders = []
+                                                return
                             
                             sell_legs = [order for order in detail["orders"] if order["transaction_type"] == "SELL"]
                             for order in sell_legs:
@@ -524,11 +525,11 @@ if st.session_state['authenticated']:
                 if orders:
                     order_data = [{
                         "Order ID": o.get('order_id', 'N/A'),
-                        "Instrument": str(o.get('trading_symbol', 'N/A')),
-                        "Type": str(o.get('order_type', 'N/A')),
-                        "Quantity": str(o.get('quantity', 0)),
-                        "Status": str(o.get('status', 'N/A')),
-                        "Message": str(o.get('status_message', '')),
+                        "Instrument": o.get('trading_symbol', 'N/A'),
+                        "Type": o.get('transaction_type', 'N/A'),
+                        "Quantity": o.get('quantity', 0),
+                        "Status": o.get('status', 'N/A'),
+                        "Message": o.get('status_message', '')
                     } for o in orders]
                     st.dataframe(pd.DataFrame(order_data))
                 else:
@@ -545,14 +546,16 @@ if st.session_state['authenticated']:
         if st.session_state['portfolio_summary']:
             st.subheader("Summary")
             col1, col2 = st.columns(2)
-            col1.markdown(f"<div class='metric-card'><div class='metric'>Total Capital</div><div class='metric-value'>₹{st.session_state['portfolio_summary'].get('Total Capital', 0):.2f}</div></div>", unsafe_allow_html=True)
-            col1.markdown(f"<div class='metric-card'><div class='metric-title'>Capital Deployed</div><div class='metric-value'>₹{st.session_state['portfolio_summary'].get('Capital Deployed', 0):.2f}</div></div>", unsafe_allow_html=True)
-            col1.markdown(f"<div class='metric-card'><div class='metric-title'>Exposure %</div><div class='metric-value'>{st.session_state['portfolio_summary'].get('Exposure %', 0):.2f}%</div></div>", unsafe_allow_html=True)
-            col1.markdown(f"<div class='metric-card'><div class='metric-title'>Available Funds</div><div class='metric-value'>₹{st.session_state['portfolio_summary'].get('Available Funds', 0):.2f}</div></div>", unsafe_allow_html=True)
-            col2.markdown(f"<div class='metric-card'><div class='metric-title'>Risk on Table</div><div><div class='metric-value'>₹{st.session_state['portfolio_summary'].get('Risk on Table', 0):.2f}</div></div>", unsafe_allow_html=True)
-            col2.markdown(f"<div class='metric-card'><div class='metric-title'>Realized P&L</div><div class='metric-value'>₹{st.session_state['portfolio_summary'].get('Realized P&L', 0):.2f}</div><div></div>", unsafe_allow_html=True)
-            col2.markdown(f"<div class='metric-card'><div class='metric-title'>Drawdown</div><div><div class='metric-value'>₹{st.session_state['portfolio_summary'].get('Drawdown ₹', 0):.2f}</div></div>", unsafe_allow_html=True)
-            col2.markdown(f"<div class='metric-card'><div class='metric-title'>Portfolio Vega</div><div class='metric-value'>{st.session_state'['portfolio_summary'].get('Portfolio Vega', 0):.2f}</div></div>", unsafe_allow_html=True)
+            with col1:
+                st.markdown(f"<div class='metric-card'><div class='metric-title'>Total Capital</div><div class='metric-value'>₹{st.session_state['portfolio_summary'].get('Total Capital', 0):.2f}</div></div>", unsafe_allow_html=True)
+                st.markdown(f"<div class='metric-card'><div class='metric-title'>Capital Deployed</div><div class='metric-value'>₹{st.session_state['portfolio_summary'].get('Capital Deployed', 0):.2f}</div></div>", unsafe_allow_html=True)
+                st.markdown(f"<div class='metric-card'><div class='metric-title'>Exposure %</div><div class='metric-value'>{st.session_state['portfolio_summary'].get('Exposure %', 0):.2f}%</div></div>", unsafe_allow_html=True)
+                st.markdown(f"<div class='metric-card'><div class='metric-title'>Available Funds</div><div class='metric-value'>₹{st.session_state['portfolio_summary'].get('Available Funds', 0):.2f}</div></div>", unsafe_allow_html=True)
+            with col2:
+                st.markdown(f"<div class='metric-card'><div class='metric-title'>Risk on Table</div><div class='metric-value'>₹{st.session_state['portfolio_summary'].get('Risk on Table', 0):.2f}</div></div>", unsafe_allow_html=True)
+                st.markdown(f"<div class='metric-card'><div class='metric-title'>Realized P&L</div><div class='metric-value'>₹{st.session_state['portfolio_summary'].get('Realized P&L', 0):.2f}</div></div>", unsafe_allow_html=True)
+                st.markdown(f"<div class='metric-card'><div class='metric-title'>Drawdown</div><div class='metric-value'>₹{st.session_state['portfolio_summary'].get('Drawdown ₹', 0):.2f}</div></div>", unsafe_allow_html=True)
+                st.markdown(f"<div class='metric-card'><div class='metric-title'>Portfolio Vega</div><div class='metric-value'>{st.session_state['portfolio_summary'].get('Portfolio Vega', 0):.2f}</div></div>", unsafe_allow_html=True)
             
             st.subheader("Risk Summary")
             if not st.session_state['strategy_df'].empty:
@@ -562,9 +565,9 @@ if st.session_state['authenticated']:
             
             if st.session_state['portfolio_summary'].get('Flags'):
                 st.subheader("🚨 Warnings")
-                for warning in st.session_state['portfolio_summary']['Flags']:
-                    st.error(f"Warning: {warning}")
+                for flag in st.session_state['portfolio_summary']['Flags']:
+                    st.warning(flag)
             else:
                 st.success("✅ No risks.")
 else:
-    st.error("Please log in.")
+    st.warning("Please log in.")
