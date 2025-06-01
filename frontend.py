@@ -1,575 +1,542 @@
 import streamlit as st
+import streamlit.components.v1 as components
+import backend
 import pandas as pd
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-import requests
-import time
+import matplotlib.pyplot as plt
+import base64
 from datetime import datetime
-import App  # Import your backend code
 
-# Page configuration
+# Set page configuration
 st.set_page_config(
-    page_title="VolGuard - Your Trading Copilot",
+    page_title="VolGuard Pro",
+    page_icon="🛡️",
     layout="wide",
-    initial_sidebar_state="expanded",
-    page_icon="📊"
+    initial_sidebar_state="expanded"
 )
 
-# Custom CSS for dark theme and trading app aesthetics
+# Custom CSS for dark theme and improved visuals
 st.markdown("""
-    <style>
-    .main {
-        background-color: #1e1e1e;
+<style>
+    .reportview-container {
+        background-color: #0e1117;
         color: #ffffff;
     }
     .sidebar .sidebar-content {
-        background-color: #252526;
+        width: 100%;
     }
-    .stButton>button {
-        background-color: #3c8dbc;
+    .stTextInput input {
+        background-color: #1a1f28;
+        color: #ffffff;
+        border: 1px solid #262d3d;
+    }
+    .stSelectbox select {
+        background-color: #1a1f28;
+        color: #ffffff;
+        border: 1px solid #262d3d;
+    }
+    .stButton button {
+        background-color: #1e90ff;
         color: white;
         border-radius: 5px;
-    }
-    .stButton>button:hover {
-        background-color: #2a6b9c;
+        height: 3em;
+        width: 100%;
     }
     .metric-card {
-        background-color: #2c2c2c;
+        background-color: #1a1f28;
         padding: 15px;
         border-radius: 10px;
-        margin-bottom: 10px;
-        box-shadow: 1px 1px 5px rgba(0,0,0,0.3);
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        margin: 10px 0;
     }
-    .metric-title {
-        font-size: 14px;
-        color: #cccccc;
+    .metric-header {
+        font-weight: bold;
+        margin-bottom: 10px;
     }
     .metric-value {
-        font-size: 18px;
+        font-size: 1.5em;
         font-weight: bold;
-        color: #ffffff;
     }
-    .stTabs [data-baseweb="tab-list"] {
-        background-color: #252526;
+    .metric-subtext {
+        font-size: 0.8em;
+        color: #aaaaaa;
     }
-    .stTabs [data-baseweb="tab"] {
-        color: #ffffff;
+    .tab {
+        background-color: #1a1f28;
+        padding: 15px;
+        border-radius: 10px;
+        margin-top: 10px;
     }
-    .stTabs [data-baseweb="tab"][aria-selected="true"] {
-        background-color: #3c8dbc;
+    .card {
+        background-color: #1a1f28;
+        padding: 15px;
+        border-radius: 10px;
+        margin: 10px 0;
     }
-    .st-expander {
-        background-color: #2c2c2c;
-        border-radius: 5px;
+    .card-title {
+        font-weight: bold;
+        margin-bottom: 10px;
     }
-    </style>
-""", unsafe_allow_html=True)
+    .flag-warning {
+        background-color: #2d1b0f;
+        color: #ffcc99;
+        padding: 10px;
+        border-left: 4px solid #ff9933;
+        margin: 10px 0;
+    }
+    .flag-success {
+        background-color: #1b262d;
+        color: #cceeff;
+        padding: 10px;
+        border-left: 4px solid #3399ff;
+        margin: 10px 0;
+    }
+    .strategy-card {
+        background-color: #1f242f;
+        padding: 15px;
+        border-radius: 10px;
+        margin: 10px 0;
+        border: 1px solid #262d3d;
+    }
+    .strategy-header {
+        font-weight: bold;
+        font-size: 1.2em;
+        margin-bottom: 10px;
+    }
+    .strategy-detail {
+        margin-left: 15px;
+        margin-bottom: 5px;
+    }
+    .strategy-strike {
+        color: #cccccc;
+        font-size: 0.9em;
+    }
+    .strategy-premium {
+        color: #33cc99;
+        font-weight: bold;
+    }
+    .strategy-max-loss {
+        color: #ff6666;
+        font-weight: bold;
+    }
+    .strategy-margin {
+        color: #ffff99;
+    }
+    .table-container {
+        overflow-x: auto;
+        border-radius: 10px;
+        border: 1px solid #262d3d;
+        padding: 10px;
+        margin: 10px 0;
+    }
+    .dataframe thead tr th {
+        background-color: #1a1f28 !important;
+        color: #ffffff !important;
+        border: 1px solid #262d3d !important;
+    }
+    .dataframe tbody tr td {
+        color: #ffffff !important;
+        border: 1px solid #262d3d !important;
+    }
+    .dataframe {
+        width: 100% !important;
+        border: none !important;
+    }
+</style>""", unsafe_allow_html=True)
 
-# Initialize session state
-def initialize_session_state():
-    defaults = {
-        'access_token': None,
-        'authenticated': False,
-        'config': {},
-        'data_fetched': False,
-        'option_chain': [],
-        'spot_price': 0.0,
-        'vix': 0.0,
-        'nifty_spot': 0.0,
-        'current_available_funds': 0.0,
-        'current_used_margin': 0.0,
-        'seller': {},
-        'full_chain_df': pd.DataFrame(),
-        'market': {'days_to_expiry': 0, 'pcr': 0.0, 'max_pain': 0.0},
-        'ivp': 0.0,
-        'hv_7': 0.0,
-        'garch_7d': 0.0,
-        'iv_rv_spread': 0.0,
-        'iv_skew_slope': 0.0,
-        'regime_score': 0.0,
-        'regime': "",
-        'regime_note': "",
-        'regime_explanation': "",
-        'event_df': pd.DataFrame(),
-        'strategies': [],
-        'strategy_rationale': "",
-        'event_warning': None,
-        'strategy_df': pd.DataFrame(),
-        'portfolio_summary': {},
-        'strategy_details': [],
-        'all_strategy_details': []
-    }
-    for key, value in defaults.items():
-        if key not in st.session_state:
-            st.session_state[key] = value
-
-initialize_session_state()
-
-# Sidebar
-with st.sidebar:
-    st.markdown("<h2 style='text-align: center; color: #3c8dbc;'>VolGuard</h2>", unsafe_allow_html=True)
-    
-    if not st.session_state['authenticated']:
-        st.subheader("Login")
-        access_token = st.text_input("Upstox API Access Token", type="password")
-        if st.button("Login"):
-            with st.spinner("Validating..."):
-                try:
-                    config = App.get_config()
-                    config['access_token'] = access_token
-                    config['headers']['Authorization'] = f"Bearer {access_token}"
-                    url = f"{config['base_url']}/user/get-funds-and-margin"
-                    res = requests.get(url, headers=config['headers'], params={"segment": "SEC"})
-                    if res.status_code == 200:
-                        st.session_state['access_token'] = access_token
-                        st.session_state['authenticated'] = True
-                        st.session_state['config'] = config
-                        st.session_state['data_fetched'] = False
-                        st.success("Login successful!")
-                    else:
-                        st.error(f"Invalid token: {res.status_code} - {res.text}")
-                except Exception as e:
-                    st.error(f"Error validating token: {e}")
+def display_metric_card(title, value, subtext, col=None):
+    """Display a visually appealing metric card"""
+    card_html = f"""
+    <div class="metric-card">
+        <div class="metric-header">{title}</div>
+        <div class="metric-value">{value}</div>
+        <div class="metric-subtext">{subtext}</div>
+    </div>
+    """
+    if col:
+        with col:
+            st.markdown(card_html, unsafe_allow_html=True)
     else:
-        st.subheader("Account")
-        st.write(f"Status: ✅ Connected")
-        st.write(f"Token: {st.session_state['access_token'][:4]}...{st.session_state['access_token'][-4:]}")
-        if st.button("Logout"):
-            for key in st.session_state.keys():
-                st.session_state[key] = None
-            initialize_session_state()
-            st.success("Logged out.")
-            st.rerun()
+        st.markdown(card_html, unsafe_allow_html=True)
 
-    if st.session_state['authenticated']:
-        st.subheader("Navigation")
-        st.radio(
-            "Go to:",
-            ["Dashboard", "Chain Analysis", "Strategy Details", "Order Placement", "Order Book", "Portfolio"],
-            key="nav_radio"
-        )
-
-# Data fetch function
-def fetch_all_data():
-    try:
-        with st.spinner("Fetching data..."):
-            # Option chain
-            st.session_state['option_chain'] = App.fetch_option_chain(st.session_state['config']) or []
-            if not st.session_state['option_chain']:
-                st.error("Failed to fetch option chain.")
-                return False
-            
-            # Spot price
-            st.session_state['spot_price'] = st.session_state['option_chain'][0].get("underlying_spot_price", 0.0)
-            if not st.session_state['spot_price']:
-                st.error("Could not determine spot price.")
-                return False
-            
-            # Indices
-            vix, nifty_spot = App.get_indices_quotes(st.session_state['config'])
-            st.session_state['vix'] = vix or 0.0
-            st.session_state['nifty_spot'] = nifty_spot or 0.0
-            if st.session_state['vix'] == 0 or st.session_state['nifty_spot'] == 0:
-                st.error("Failed to fetch VIX or Nifty Spot.")
-                return False
-            
-            # Funds
-            funds_info = App.get_user_funds_and_margin(st.session_state['config'], segment="SEC") or {}
-            st.session_state['current_available_funds'] = funds_info.get('available_margin', 0.0)
-            st.session_state['current_used_margin'] = funds_info.get('used_margin', 0.0)
-            st.session_state['config']['total_capital'] = st.session_state['current_available_funds'] + st.session_state['current_used_margin']
-            
-            # Metrics
-            st.session_state['seller'] = App.extract_seller_metrics(st.session_state['option_chain'], st.session_state['spot_price']) or {}
-            st.session_state['full_chain_df'] = App.full_chain_table(st.session_state['option_chain'], st.session_state['spot_price']) or pd.DataFrame()
-            st.session_state['market'] = App.market_metrics(st.session_state['option_chain'], st.session_state['config']['expiry_date']) or {'days_to_expiry': 0, 'pcr': 0.0, 'max_pain': 0.0}
-            st.session_state['ivp'] = App.load_ivp(st.session_state['config'], st.session_state['seller'].get("avg_iv", 0.0)) or 0.0
-            st.session_state['hv_7'], st.session_state['garch_7d'], st.session_state['iv_rv_spread'] = App.calculate_volatility(st.session_state['config'], st.session_state['seller']) or (0.0, 0.0, 0.0)
-            st.session_state['iv_skew_slope'] = App.calculate_iv_skew_slope(st.session_state['full_chain_df']) or 0.0
-            
-            # Regime
-            st.session_state['regime_score'], st.session_state['regime'], st.session_state['regime_note'], st.session_state['regime_explanation'] = App.calculate_regime(
-                atm_iv=st.session_state['seller'].get("avg_iv", 0.0),
-                ivp=st.session_state['ivp'],
-                realized_vol=st.session_state['hv_7'],
-                garch_vol=st.session_state['garch_7d'],
-                straddle_price=st.session_state['seller'].get("straddle_price", 0.0),
-                spot_price=st.session_state['spot_price'],
-                pcr=st.session_state['market'].get('pcr', 0.0),
-                vix=st.session_state['vix'],
-                iv_skew_slope=st.session_state['iv_skew_slope']
-            ) or (0.0, "", "", "")
-            
-            # Events
-            st.session_state['event_df'] = App.load_upcoming_events(st.session_state['config']) or pd.DataFrame()
-            
-            # Strategies
-            st.session_state['strategies'], st.session_state['strategy_rationale'], st.session_state['event_warning'] = App.suggest_strategy(
-                regime_label=st.session_state['regime'],
-                ivp=st.session_state['ivp'],
-                iv_minus_rv=st.session_state['iv_rv_spread'],
-                days_to_expiry=st.session_state['market'].get('days_to_expiry', 0),
-                event_df=st.session_state['event_df'],
-                expiry_date=st.session_state['config']['expiry_date'],
-                straddle_price=st.session_state['seller'].get("straddle_price", 0.0),
-                spot_price=st.session_state['spot_price']
-            ) or ([], "", None)
-            
-            # Strategy details
-            func_map = {
-                "Iron Fly": App.iron_fly,
-                "Iron Condor": App.iron_condor,
-                "Jade Lizard": App.jade_lizard,
-                "Straddle": App.straddle,
-                "Calendar Spread": App.calendar_spread,
-                "Bull Put Spread": App.bull_put_spread,
-                "Wide Strangle": App.wide_strangle,
-                "ATM Strangle": App.atm_strangle
-            }
-            st.session_state['strategy_details'] = []
-            for strat in st.session_state['strategies']:
-                strat_clean = strat.replace("(hedged)", "").replace("with strict stop", "").replace("short ", "").strip()
-                if strat_clean in func_map:
-                    detail = func_map[strat_clean](st.session_state['option_chain'], st.session_state['spot_price'], st.session_state['config'])
-                    if detail:
-                        detail['estimated_margin'] = App.calculate_strategy_margin(st.session_state['config'], detail["orders"]) or None
-                        st.session_state['strategy_details'].append(detail)
-            
-            # All strategies
-            st.session_state['all_strategy_details'] = []
-            for strat_name, func in func_map.items():
-                detail = func(st.session_state['option_chain'], st.session_state['spot_price'], st.session_state['config'])
-                if detail:
-                    detail['estimated_margin'] = App.calculate_strategy_margin(st.session_state['config'], detail["orders"]) or None
-                    st.session_state['all_strategy_details'].append(detail)
-            
-            # Risk and portfolio
-            trades_df = App.fetch_trade_data(st.session_state['config'], st.session_state['full_chain_df']) or pd.DataFrame()
-            st.session_state['strategy_df'], st.session_state['portfolio_summary'] = App.evaluate_full_risk(
-                trades_df, st.session_state['config'], st.session_state['regime'], st.session_state['current_available_funds']
-            ) or (pd.DataFrame(), {})
-            
-            st.session_state['data_fetched'] = True
-            st.success("Data fetched!")
-            return True
-    except Exception as e:
-        st.error(f"Error fetching data: {e}")
-        return False
-
-# Fetch data if authenticated
-if st.session_state['authenticated'] and not st.session_state['data_fetched']:
-    fetch_all_data()
-
-# Tabs
-if st.session_state['authenticated']:
-    tabs = st.tabs(["Dashboard", "Chain Analysis", "Strategy Details", "Order Placement", "Order Book", "Portfolio"])
+def display_flag(flag, col=None):
+    """Display a flag with appropriate styling"""
+    if flag.startswith("✅"):
+        html = f'<div class="flag-success">{flag}</div>'
+    elif flag.startswith("❌") or flag.startswith("⚠️"):
+        html = f'<div class="flag-warning">{flag}</div>'
+    else:
+        html = f'<div>{flag}</div>'
     
-    # Dashboard
-    with tabs[0]:
-        st.header("📊 Dashboard")
-        if st.button("Refresh", key="refresh_dashboard"):
-            st.session_state['data_fetched'] = False
-            fetch_all_data()
-            st.rerun()
-        
-        if st.session_state['data_fetched']:
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.markdown(f"<div class='metric-card'><div class='metric-title'>Spot Price</div><div class='metric-value'>₹{st.session_state['spot_price']:.0f}</div></div>", unsafe_allow_html=True)
-                st.markdown(f"<div class='metric-card'><div class='metric-title'>ATM Strike</div><div class='metric-value'>₹{st.session_state['seller'].get('strike', 0):.0f}</div></div>", unsafe_allow_html=True)
-                st.markdown(f"<div class='metric-card'><div class='metric-title'>Straddle Price</div><div class='metric-value'>₹{st.session_state['seller'].get('straddle_price', 0):.2f}</div></div>", unsafe_allow_html=True)
-                st.markdown(f"<div class='metric-card'><div class='metric-title'>Breakeven Range</div><div class='metric-value'>{st.session_state['seller'].get('strike', 0) - st.session_state['seller'].get('straddle_price', 0):.0f} – {st.session_state['seller'].get('strike', 0) + st.session_state['seller'].get('straddle_price', 0):.0f}</div></div>", unsafe_allow_html=True)
-            
-            with col2:
-                st.markdown(f"<div class='metric-card'><div class='metric-title'>ATM IV</div><div class='metric-value'>{st.session_state['seller'].get('avg_iv', 0):.2f}%</div></div>", unsafe_allow_html=True)
-                st.markdown(f"<div class='metric-card'><div class='metric-title'>Realized Vol (7D)</div><div class='metric-value'>{st.session_state['hv_7']:.2f}%</div></div>", unsafe_allow_html=True)
-                st.markdown(f"<div class='metric-card'><div class='metric-title'>GARCH Vol (7D)</div><div class='metric-value'>{st.session_state['garch_7d']:.2f}%</div></div>", unsafe_allow_html=True)
-                st.markdown(f"<div class='metric-card'><div class='metric-title'>IV - RV Spread</div><div class='metric-value'>{st.session_state['iv_rv_spread']:+.2f}%</div></div>", unsafe_allow_html=True)
-                st.markdown(f"<div class='metric-card'><div class='metric-title'>IV Percentile</div><div class='metric-value'>{st.session_state['ivp']:.2f}%</div></div>", unsafe_allow_html=True)
-            
-            with col3:
-                st.markdown(f"<div class='metric-card'><div class='metric-title'>Theta (Total)</div><div class='metric-value'>₹{st.session_state['seller'].get('theta', 0):.2f}</div></div>", unsafe_allow_html=True)
-                st.markdown(f"<div class='metric-card'><div class='metric-title'>Vega (IV Risk)</div><div class='metric-value'>₹{st.session_state['seller'].get('vega', 0):.2f}</div></div>", unsafe_allow_html=True)
-                st.markdown(f"<div class='metric-card'><div class='metric-title'>Days to Expiry</div><div class='metric-value'>{st.session_state['market']['days_to_expiry']} days</div></div>", unsafe_allow_html=True)
-                st.markdown(f"<div class='metric-card'><div class='metric-title'>PCR</div><div class='metric-value'>{st.session_state['market']['pcr']:.2f}</div></div>", unsafe_allow_html=True)
-                st.markdown(f"<div class='metric-card'><div class='metric-title'>Max Pain</div><div class='metric-value'>₹{st.session_state['market']['max_pain']:.0f}</div></div>", unsafe_allow_html=True)
-            
-            st.subheader("🧠 Volatility Regime")
-            st.markdown(f"<div class='metric-card'><div class='metric-title'>Regime</div><div class='metric-value'>{st.session_state['regime']} (Score: {st.session_state['regime_score']:.2f})</div></div>", unsafe_allow_html=True)
-            st.markdown(f"<div class='metric-card'><div class='metric-title'>Note</div><div class='metric-value'>{st.session_state['regime_note']}</div></div>", unsafe_allow_html=True)
-            st.markdown(f"<div class='metric-card'><div class='metric-title'>Details</div><div class='metric-value'>{st.session_state['regime_explanation']}</div></div>", unsafe_allow_html=True)
-            
-            st.subheader("📊 Volatility Comparison")
-            fig_vol = go.Figure(data=[
-                go.Bar(
-                    x=['ATM IV', 'Realized Vol (7D)', 'GARCH Vol (7D)'],
-                    y=[st.session_state['seller'].get('avg_iv', 0), st.session_state['hv_7'], st.session_state['garch_7d']],
-                    marker_color=['#1f77b4', '#2ca02c', '#d62728']
-                )
-            ])
-            fig_vol.update_layout(
-                title="Volatility Comparison",
-                yaxis_title="Annualized Volatility (%)",
-                template="plotly_dark",
-                showlegend=False
-            )
-            for i, v in enumerate([st.session_state['seller'].get('avg_iv', 0), st.session_state['hv_7'], st.session_state['garch_7d']]):
-                fig_vol.add_annotation(x=i, y=v, text=f"{v:.2f}%", showarrow=False, yshift=10)
-            st.plotly_chart(fig_vol, use_container_width=True)
-            
-            st.subheader("📈 Chain Analysis")
-            if not st.session_state['full_chain_df'].empty:
-                fig_chain = make_subplots(
-                    rows=2, cols=2,
-                    subplot_titles=("IV Skew", "Total Theta", "Straddle Price", "Total OI"),
-                    specs=[[{"type": "xy"}, {"type": "xy"}], [{"type": "xy"}, {"type": "bar"}]]
-                )
-                fig_chain.add_trace(go.Scatter(x=st.session_state['full_chain_df']['Strike'], y=st.session_state['full_chain_df']['IV Skew'], mode='lines+markers', name='IV Skew', line=dict(color='purple')), row=1, col=1)
-                fig_chain.add_hline(y=0, line_dash="dash", line_color="gray", row=1, col=1)
-                fig_chain.add_trace(go.Scatter(x=st.session_state['full_chain_df']['Strike'], y=st.session_state['full_chain_df']['Total Theta'], mode='lines+markers', name='Total Theta', line=dict(color='green')), row=1, col=2)
-                fig_chain.add_trace(go.Scatter(x=st.session_state['full_chain_df']['Strike'], y=st.session_state['full_chain_df']['Straddle Price'], mode='lines+markers', name='Straddle Price', line=dict(color='orange')), row=2, col=1)
-                fig_chain.add_trace(go.Bar(x=st.session_state['full_chain_df']['Strike'], y=st.session_state['full_chain_df']['Total OI'], name='Total OI', marker_color='blue'), row=2, col=2)
-                fig_chain.update_layout(template="plotly_dark", height=600, showlegend=False)
-                st.plotly_chart(fig_chain, use_container_width=True)
-            
-            st.subheader("📊 Payoff Diagram")
-            if st.session_state['strategy_details']:
-                fig_payoff = go.Figure()
-                strikes = [st.session_state['spot_price'] + i for i in range(-300, 301, 3)]
-                for detail in st.session_state['strategy_details']:
-                    payoffs = [0] * len(strikes)
-                    for order_idx, order in enumerate(detail["orders"]):
-                        instrument_key = order["instrument_key"]
-                        qty = order["quantity"]
-                        transaction_type = order["transaction_type"]
-                        try:
-                            strike = detail["strikes"][order_idx]
-                        except IndexError:
-                            continue
-                        is_buy = (transaction_type == "BUY")
-                        is_call = ("CE" in instrument_key)
-                        price = detail["pricing"].get(instrument_key, {}).get("last_price", 0)
-                        for i, s in enumerate(strikes):
-                            if is_call:
-                                payoff = (s - strike) - price if is_buy else price - (s - strike)
-                                payoff = max(0, payoff) if is_buy else min(0, payoff)
-                            else:
-                                payoff = (strike - s) - price if is_buy else price - (strike - s)
-                                payoff = max(0, payoff) if is_buy else min(0, payoff)
-                            payoffs[i] += payoff * (abs(qty) / st.session_state['config']["lot_size"])
-                    fig_payoff.add_trace(go.Scatter(x=strikes, y=payoffs, mode='lines', name=detail["strategy"]))
-                fig_payoff.add_vline(x=st.session_state['spot_price'], line_dash="dash", line_color="gray", annotation_text="Spot Price")
-                fig_payoff.add_hline(y=0, line_dash="dash", line_color="black", annotation_text="Zero P&L")
-                fig_payoff.update_layout(title="Payoff Diagram", xaxis_title="Price at Expiry", yaxis_title="P&L (₹)", template="plotly_dark")
-                st.plotly_chart(fig_payoff, use_container_width=True)
-            
-            st.subheader("📅 Upcoming Events")
-            if not st.session_state['event_df'].empty:
-                st.dataframe(st.session_state['event_df'])
-                if st.session_state['event_warning']:
-                    st.warning(st.session_state['event_warning'])
-            else:
-                st.info("No events found.")
-            
-            st.subheader("📈 Recommended Strategies")
-            st.write(f"**Strategies**: {', '.join(st.session_state['strategies'])}")
-            st.write(f"**Rationale**: {st.session_state['strategy_rationale']}")
+    if col:
+        with col:
+            st.markdown(html, unsafe_allow_html=True)
+    else:
+        st.markdown(html, unsafe_allow_html=True)
+
+def display_strategy_card(detail):
+    """Display a visually appealing strategy card"""
+    strike_text = ", ".join([f"{strike}" for strike in detail["strikes"]])
     
-    # Chain Analysis
-    with tabs[1]:
-        st.header("📈 Chain Analysis")
-        if st.button("Refresh", key="refresh_chain"):
-            st.session_state['data_fetched'] = False
-            fetch_all_data()
-            st.rerun()
+    max_loss_value = detail["max_loss"]
+    if max_loss_value == float('inf'):
+        max_loss_display = "Unlimited"
+    else:
+        max_loss_display = f"₹{detail['max_loss']:.2f}"
+    
+    margin_display = f"₹{detail['estimated_margin']:.2f}" if detail[
+        'estimated_margin'] is not None else "N/A"
+    
+    card_html = f"""
+    <div class="strategy-card">
+        <div class="strategy-header">{detail['strategy']}</div>
+        <div class="strategy-detail">🎯 <span class="strategy-strike">Strikes: {strike_text}</span></div>
+        <div class="strategy-detail">💰 Premium: <span class="strategy-premium">₹{detail['premium']:.2f}</span></div>
+        <div class="strategy-detail">📉 Max Loss: <span class="strategy-max-loss">{max_loss_display}</span></div>
+        <div class="strategy-detail">🛡️ Estimated Margin: <span class="strategy-margin">{margin_display}</span></div>
+    </div>
+    """
+    st.markdown(card_html, unsafe_allow_html=True)
+
+def display_strategy_details(strategy_details):
+    """Display strategy details in a visually appealing way"""
+    cols = st.columns(len(strategy_details))
+    for i, detail in enumerate(strategy_details):
+        with cols[i]:
+            display_strategy_card(detail)
+
+def main():
+    # Initialize session state
+    if 'logged_in' not in st.session_state:
+        st.session_state.logged_in = False
+    if 'data_loaded' not in st.session_state:
+        st.session_state.data_loaded = False
+    if 'config' not in st.session_state:
+        st.session_state.config = None
+    if 'backend_data' not in st.session_state:
+        st.session_state.backend_data = None
+
+    # Sidebar
+    with st.sidebar:
+        st.markdown("### 🛡️ VolGuard Pro\n#### Option Strategy Advisor")
+        st.markdown("---")
         
-        if not st.session_state['full_chain_df'].empty:
-            st.subheader("ATM ±300 Chain")
-            st.dataframe(st.session_state['full_chain_df'])
-            eff_df = st.session_state['full_chain_df'].copy()
-            eff_df["Theta/Vega"] = eff_df.apply(lambda row: row["Total Theta"] / row["Total Vega"] if row["Total Vega"] != 0 else 0.0, axis=1)
-            eff_df = eff_df[["Strike", "Total Theta", "Total Vega", "Theta/Vega"]].sort_values("Theta/Vega", ascending=False).dropna()
-            st.subheader("Theta/Vega Ranking")
-            st.dataframe(eff_df)
+        if not st.session_state.logged_in:
+            access_token = st.text_input("🔑 Enter Access Token", type="password", 
+                                      help="Enter your Upstox API access token")
+            login_button = st.button("🔓 Login")
+            
+            if login_button and access_token:
+                st.session_state.config = backend.get_config(access_token)
+                st.session_state.logged_in = True
+                st.rerun()
         else:
-            st.warning("No chain data.")
-    
-    # Strategy Details
-    with tabs[2]:
-        st.header("Strategies")
-        if st.button("Refresh", key="refresh_strategies"):
-            st.session_state['data_fetched'] = False
-            fetch_all_data()
-            st.rerun()
-        
-        st.subheader("Recommended Strategies")
-        for detail in st.session_state['strategy_details']:
-            with st.expander(f"{detail['strategy']}"):
-                st.write(f"**Strikes**: {detail['strikes']}")
-                st.write(f"**Premium**: ₹{detail['premium']:.2f}")
-                st.write(f"**Max Profit**: ₹{detail['max_profit']:.2f}")
-                st.write(f"**Max Loss**: {'Unlimited' if detail['max_loss'] == float('inf') else f'₹{detail['max_loss']:.2f}'}")
-                st.write(f"**Margin**: {'N/A' if not detail['estimated_margin'] else f'₹{detail['estimated_margin']:.2f}'}")
-        
-        st.subheader("All Strategies")
-        for detail in st.session_state['all_strategy_details']:
-            with st.expander(f"{detail['strategy']}"):
-                st.write(f"**Strikes**: {detail['strikes']}")
-                st.write(f"**Premium**: ₹{detail['premium']:.2f}")
-                st.write(f"**Max Profit**: ₹{detail['max_profit']:.2f}")
-                st.write(f"**Max Loss**: {'Unlimited' if detail['max_loss'] == float('inf') else f'₹{detail['max_loss']:.2f}'}")
-                st.write(f"**Margin**: {'N/A' if not detail['estimated_margin'] else f'₹{detail['estimated_margin']:.2f}'}")
-    
-    # Order Placement
-    with tabs[3]:
-        st.header("Place Order")
-        if st.button("Refresh", key="refresh_orders"):
-            st.session_state['data_fetched'] = False
-            fetch_all_data()
-            st.rerun()
-        
-        st.subheader("Select Strategy")
-        strategy_options = [detail['strategy'] for detail in st.session_state['all_strategy_details']]
-        selected_strategy = st.selectbox("Strategy:", strategy_options, key="strategy_select")
-        
-        if selected_strategy:
-            detail = next((d for d in st.session_state['all_strategy_details'] if d['strategy'] == selected_strategy), None)
-            if detail:
-                st.write(f"**Strikes**: {detail['strikes']}")
-                st.write(f"**Premium**: ₹{detail['premium']:.2f}")
-                st.write(f"**Max Profit**: ₹{detail['max_profit']:.2f}")
-                st.write(f"**Max Loss**: {'Unlimited' if detail['max_loss'] == float('inf') else f'₹{detail['max_loss']:.2f}'}")
-                st.write(f"**Margin**: {'N/A' if not detail['estimated_margin'] else f'₹{detail['estimated_margin']:.2f}'}")
-                
-                proceed = True
-                if detail['estimated_margin'] and detail['estimated_margin'] > st.session_state['current_available_funds']:
-                    st.warning(f"Insufficient funds: Required ₹{detail['estimated_margin']:.2f}, Available: ₹{st.session_state['current_available_funds']:.2f}")
-                    proceed = st.checkbox("Proceed anyway?", key="proceed_check")
-                
-                if st.button("Place Order", key="place_order"):
-                    if not proceed:
-                        st.error("Order cancelled due to insufficient funds.")
+            st.success("✅ Token Accepted")
+            st.info("🔄 Processing Data...")
+            
+            if st.button("🔁 Refresh Data"):
+                st.session_state.data_loaded = False
+            
+            if not st.session_state.data_loaded:
+                with st.spinner("Fetching market data..."):
+                    (option_chain, spot_price, seller, hv_7, garch_7d, iv_rv_spread,
+                     ivp, market, iv_skew_slope, regime_score, regime, regime_note,
+                     regime_explanation, event_df, strategies, strategy_rationale,
+                     event_warning, strategy_df, portfolio_summary, strategy_details,
+                     full_chain_df) = backend.main(st.session_state.config)
+                    
+                    if option_chain:
+                        st.session_state.data_loaded = True
+                        st.session_state.backend_data = {
+                            "option_chain": option_chain,
+                            "spot_price": spot_price,
+                            "seller": seller,
+                            "hv_7": hv_7,
+                            "garch_7d": garch_7d,
+                            "iv_rv_spread": iv_rv_spread,
+                            "ivp": ivp,
+                            "market": market,
+                            "iv_skew_slope": iv_skew_slope,
+                            "regime_score": regime_score,
+                            "regime": regime,
+                            "regime_note": regime_note,
+                            "regime_explanation": regime_explanation,
+                            "event_df": event_df,
+                            "strategies": strategies,
+                            "strategy_rationale": strategy_rationale,
+                            "event_warning": event_warning,
+                            "strategy_df": strategy_df,
+                            "portfolio_summary": portfolio_summary,
+                            "strategy_details": strategy_details,
+                            "full_chain_df": full_chain_df
+                        }
+                        st.rerun()
                     else:
-                        with st.spinner("Placing order..."):
-                            order_ids = []
-                            failed_orders = []
-                            buy_legs = [order for order in detail["orders"] if order["transaction_type"] == "BUY"]
-                            for order in buy_legs:
-                                order_id = App.place_order(
-                                    st.session_state['config'],
-                                    order["instrument_key"],
-                                    order["quantity"],
-                                    order["transaction_type"]
-                                )
-                                if order_id:
-                                    order_ids.append(order_id)
-                                    st.write(f"Buy Order: {order_id} for {order['instrument_key']} (Qty: {order['quantity']})")
-                                else:
-                                    failed_orders.append(order["instrument_key"])
-                            if buy_legs and not order_ids:
-                                st.error(f"All BUY orders failed for {detail['strategy']}.")
-                            else:
-                                if buy_legs:
-                                    st.write("Waiting for BUY legs to fill...")
-                                    all_filled = False
-                                    start_time = time.time()
-                                    while not all_filled and (time.time() - start_time) < 120:
-                                        orders = App.get_order_book(st.session_state['config']) or []
-                                        all_filled = True
-                                        for oid in order_ids:
-                                            order = next((o for o in orders if o.get('order_id') == oid), None)
-                                            if not order or order.get('status') not in ["COMPLETE", "FILLED"]:
-                                                all_filled = False
-                                                if order and order.get('status') in ["CANCELLED", "REJECTED"]:
-                                                    st.error(f"Buy order {oid} {order.get('status')}: {order.get('status_message', '')}")
-                                                    all_filled = False
-                                                    break
-                                        time.sleep(1)
-                                    if not all_filled:
-                                        st.error("Timeout waiting for BUY legs. Aborting.")
-                                    else:
-                                        st.success("All BUY legs filled!")
-                                        funds_info = App.get_user_funds_and_margin(st.session_state['config'], segment="SEC") or {}
-                                        current_funds = funds_info.get('available_margin', 0.0)
-                                        if current_funds < 0:
-                                            st.warning("Low funds after BUY legs.")
-                                            if not st.checkbox("Proceed with SELL legs?", key="sell_proceed"):
-                                                st.error("Order cancelled.")
-                                                sell_legs = []
-                            
-                            sell_legs = [order for order in detail["orders"] if order["transaction_type"] == "SELL"]
-                            for order in sell_legs:
-                                order_id = App.place_order(
-                                    st.session_state['config'],
-                                    order["instrument_key"],
-                                    order["quantity"],
-                                    order["transaction_type"]
-                                )
-                                if order_id:
-                                    order_ids.append(order_id)
-                                    st.write(f"Sell Order: {order_id} for {order['instrument_key']} (Qty: {order['quantity']})")
-                                else:
-                                    failed_orders.append(order["instrument_key"])
-                            
-                            if order_ids:
-                                st.success(f"Placed {len(order_ids)} orders for {detail['strategy']}.")
-                                if failed_orders:
-                                    st.warning(f"{len(failed_orders)} orders failed: {failed_orders}")
-                            else:
-                                st.error(f"All orders failed for {detail['strategy']}.")
-    
-    # Order Book
-    with tabs[4]:
-        st.header("Order Book")
-        if st.button("Refresh", key="refresh_order_book"):
-            with st.spinner("Fetching orders..."):
-                orders = App.get_order_book(st.session_state['config']) or []
-                if orders:
-                    order_data = [{
-                        "Order ID": o.get('order_id', 'N/A'),
-                        "Instrument": o.get('trading_symbol', 'N/A'),
-                        "Type": o.get('transaction_type', 'N/A'),
-                        "Quantity": o.get('quantity', 0),
-                        "Status": o.get('status', 'N/A'),
-                        "Message": o.get('status_message', '')
-                    } for o in orders]
-                    st.dataframe(pd.DataFrame(order_data))
-                else:
-                    st.warning("No orders found.")
-    
-    # Portfolio
-    with tabs[5]:
-        st.header("Portfolio")
-        if st.button("Refresh", key="refresh_portfolio"):
-            st.session_state['data_fetched'] = False
-            fetch_all_data()
-            st.rerun()
+                        st.error("Failed to fetch market data. Please try again.")
+            else:
+                st.success("Data loaded ✅")
+
+    # Main content area
+    if not st.session_state.logged_in:
+        st.markdown("# 🛡️ VolGuard Pro - Option Strategy Advisor")
+        st.markdown("## Welcome to VolGuard Pro")
+        st.markdown("Please enter your access token in the sidebar to begin.")
+        st.image("https://via.placeholder.com/1200x400?text=VolGuard+Pro+Dashboard+Preview")
+        return
+
+    if not st.session_state.data_loaded:
+        st.markdown("# 🛡️ VolGuard Pro - Option Strategy Advisor")
+        st.markdown("## Waiting for data to load...")
+        with st.spinner("Loading data... This may take a few moments."):
+            time.sleep(2)
+        return
+
+    # Retrieve data from session state
+    data = st.session_state.backend_data
+    option_chain = data["option_chain"]
+    spot_price = data["spot_price"]
+    seller = data["seller"]
+    hv_7 = data["hv_7"]
+    garch_7d = data["garch_7d"]
+    iv_rv_spread = data["iv_rv_spread"]
+    ivp = data["ivp"]
+    market = data["market"]
+    iv_skew_slope = data["iv_skew_slope"]
+    regime_score = data["regime_score"]
+    regime = data["regime"]
+    regime_note = data["regime_note"]
+    regime_explanation = data["regime_explanation"]
+    event_df = data["event_df"]
+    strategies = data["strategies"]
+    strategy_rationale = data["strategy_rationale"]
+    event_warning = data["event_warning"]
+    strategy_df = data["strategy_df"]
+    portfolio_summary = data["portfolio_summary"]
+    strategy_details = data["strategy_details"]
+    full_chain_df = data["full_chain_df"]
+
+    # Create tabs
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "📊 Dashboard", 
+        "📈 Market Analysis", 
+        "💼 Strategy Builder", 
+        "🧮 Order Manager"
+    ])
+
+    # Dashboard Tab
+    with tab1:
+        st.markdown("## 📊 Real-Time Dashboard")
         
-        if st.session_state['portfolio_summary']:
-            st.subheader("Summary")
-            col1, col2 = st.columns(2)
-            with col1:
-                st.markdown(f"<div class='metric-card'><div class='metric-title'>Total Capital</div><div class='metric-value'>₹{st.session_state['portfolio_summary'].get('Total Capital', 0):.2f}</div></div>", unsafe_allow_html=True)
-                st.markdown(f"<div class='metric-card'><div class='metric-title'>Capital Deployed</div><div class='metric-value'>₹{st.session_state['portfolio_summary'].get('Capital Deployed', 0):.2f}</div></div>", unsafe_allow_html=True)
-                st.markdown(f"<div class='metric-card'><div class='metric-title'>Exposure %</div><div class='metric-value'>{st.session_state['portfolio_summary'].get('Exposure %', 0):.2f}%</div></div>", unsafe_allow_html=True)
-                st.markdown(f"<div class='metric-card'><div class='metric-title'>Available Funds</div><div class='metric-value'>₹{st.session_state['portfolio_summary'].get('Available Funds', 0):.2f}</div></div>", unsafe_allow_html=True)
-            with col2:
-                st.markdown(f"<div class='metric-card'><div class='metric-title'>Risk on Table</div><div class='metric-value'>₹{st.session_state['portfolio_summary'].get('Risk on Table', 0):.2f}</div></div>", unsafe_allow_html=True)
-                st.markdown(f"<div class='metric-card'><div class='metric-title'>Realized P&L</div><div class='metric-value'>₹{st.session_state['portfolio_summary'].get('Realized P&L', 0):.2f}</div></div>", unsafe_allow_html=True)
-                st.markdown(f"<div class='metric-card'><div class='metric-title'>Drawdown</div><div class='metric-value'>₹{st.session_state['portfolio_summary'].get('Drawdown ₹', 0):.2f}</div></div>", unsafe_allow_html=True)
-                st.markdown(f"<div class='metric-card'><div class='metric-title'>Portfolio Vega</div><div class='metric-value'>{st.session_state['portfolio_summary'].get('Portfolio Vega', 0):.2f}</div></div>", unsafe_allow_html=True)
+        # Summary metrics
+        col1, col2, col3, col4 = st.columns(4)
+        display_metric_card("📍 Spot Price", f"{spot_price:.0f}", "Current Nifty Level", col1)
+        display_metric_card("🎯 ATM Strike", f"{seller['strike']:.0f}", "At The Money Option", col2)
+        display_metric_card("💰 Straddle Price", f"₹{seller['straddle_price']:.2f}", "Combined CE + PE Price", col3)
+        breakeven_range = f"{seller['strike'] - seller['straddle_price']:.0f} – {seller['strike'] + seller['straddle_price']:.0f}"
+        display_metric_card("📉 Breakeven Range", breakeven_range, "Straddle Breakpoints", col4)
+        
+        col5, col6, col7, col8 = st.columns(4)
+        display_metric_card("📉 ATM IV", f"{seller['avg_iv']:.2f}%", "Implied Volatility", col5)
+        display_metric_card("📉 Realized Vol (7D)", f"{hv_7:.2f}%", "Historical Volatility", col6)
+        display_metric_card("🔮 GARCH Vol (7D)", f"{garch_7d:.2f}%", "Volatility Forecast", col7)
+        display_metric_card("🧮 IV - RV Spread", f"{iv_rv_spread:+.2f}%", "Premium/Risk Indicator", col8)
+        
+        col9, col10, col11, col12 = st.columns(4)
+        display_metric_card("📊 IV Percentile", f"{ivp}%", "IV Valuation", col9)
+        display_metric_card("🌪️ Vega", f"₹{seller['vega']:.2f}", "Volatility Exposure", col10)
+        display_metric_card("📐 Delta", f"{seller['delta']:.4f}", "Directional Bias", col11)
+        display_metric_card("🧠 Vol Regime", regime, regime_note, col12)
+        
+        col13, col14, col15, col16 = st.columns(4)
+        display_metric_card("📆 Days to Expiry", f"{market['days_to_expiry']}", "Contract Days Remaining", col13)
+        display_metric_card("🔁 PCR", f"{market['pcr']:.2f}", "Put Call Ratio", col14)
+        display_metric_card("🎯 Max Pain", f"{market['max_pain']:.0f}", "Pain Point", col15)
+        display_metric_card("📉 IV Skew Slope", f"{iv_skew_slope:.4f}", "Skew Indicator", col16)
+        
+        # Volatility comparison chart
+        st.markdown("### 📈 Volatility Analysis")
+        fig = backend.plot_vol_comparison(seller, hv_7, garch_7d)
+        st.pyplot(fig)
+        plt.close()
+        
+        # Portfolio overview
+        st.markdown("### 🧾 Portfolio Overview")
+        col17, col18, col19, col20 = st.columns(4)
+        display_metric_card("💰 Total Capital", f"₹{portfolio_summary['Total Capital']:,}", "Account Size", col17)
+        display_metric_card("💸 Capital Deployed", f"₹{portfolio_summary['Capital Deployed']:,} ({portfolio_summary['Exposure %']:.2f}%)", "Used Portion", col18)
+        display_metric_card("🛑 Daily Risk Limit", f"₹{portfolio_summary['Daily Risk Limit']:,}", "Maximum Daily Risk", col19)
+        display_metric_card("📆 Weekly Risk Limit", f"₹{portfolio_summary['Weekly Risk Limit']:,}", "Maximum Weekly Risk", col20)
+        
+        # Drawdown info
+        drawdown_col = st.columns(1)[0]
+        drawdown_color = "red" if portfolio_summary["Drawdown ₹"] > 0 else "green"
+        drawdown_text = f"🔴 Drawdown: ₹{portfolio_summary['Drawdown ₹']:,} ({portfolio_summary['Drawdown %']:.2f}%)"
+        display_metric_card("📉 Portfolio Drawdown", drawdown_text, 
+                          "Since Start of Period", drawdown_col)
+        
+        # Flags section
+        st.markdown("### 🚩 Risk Warnings")
+        if portfolio_summary.get("Flags"):
+            for flag in portfolio_summary["Flags"]:
+                display_flag(flag)
+        else:
+            st.success("✅ No active risk violations detected")
             
-            st.subheader("Risk Summary")
-            if not st.session_state['strategy_df'].empty:
-                st.dataframe(st.session_state['strategy_df'])
-            else:
-                st.warning("No risk data.")
+    # Market Analysis Tab
+    with tab2:
+        st.markdown("## 📈 Market Analysis")
+        
+        # Regime analysis
+        st.markdown(f"### 🔍 Volatility Regime: **{regime}** (Score: {regime_score:.2f})")
+        st.markdown(f"**Note:** {regime_note}")
+        st.markdown(f"**Details:** {regime_explanation}")
+        
+        # Event analysis
+        st.markdown("### 🗓️ Upcoming Events")
+        if not event_df.empty:
+            st.dataframe(event_df, use_container_width=True)
+            if event_warning:
+                display_flag(event_warning)
+        else:
+            st.info("No upcoming events affecting the market")
+        
+        # Chain analysis
+        st.markdown("### 🔄 Options Chain Analysis")
+        fig = backend.plot_chain_analysis(full_chain_df)
+        st.pyplot(fig)
+        plt.close()
+        
+        # Efficiency analysis
+        st.markdown("### ⚙️ Strategy Efficiency")
+        eff_df = full_chain_df.copy()
+        eff_df["Theta/Vega"] = eff_df.apply(
+            lambda row: row["Total Theta"] / row["Total Vega"] if row[
+                                                                 "Total Vega"] != 0 else float('nan'),
+            axis=1
+        )
+        eff_df = eff_df[["Strike", "Total Theta", "Total Vega", "Theta/Vega"]].sort_values(
+            "Theta/Vega", ascending=False).dropna()
+        
+        st.dataframe(eff_df, use_container_width=True)
+        
+        # Regime graph
+        st.markdown("### 📊 Volatility Comparison")
+        fig = backend.plot_vol_comparison(seller, hv_7, garch_7d)
+        st.pyplot(fig)
+        plt.close()
+        
+    # Strategy Builder Tab
+    with tab3:
+        st.markdown("## 💼 Strategy Builder")
+        
+        # Strategy suggestion
+        st.markdown("### 🎯 Recommended Strategies")
+        st.markdown(f"**Rationale:** {strategy_rationale}")
+        if event_warning:
+            display_flag(event_warning)
+        
+        # Display strategy cards
+        st.markdown("### 📦 Strategy Details")
+        display_strategy_details(strategy_details)
+        
+        # All strategies
+        st.markdown("### 📋 Full Strategy Menu")
+        strategy_cols = st.columns(4)
+        strategy_names = ["Iron Fly", "Iron Condor", "Jade Lizard", "Straddle", 
+                         "Calendar Spread", "Bull Put Spread", "Wide Strangle", "ATM Strangle"]
+        
+        # Create cards for all strategies
+        for i, name in enumerate(strategy_names):
+            with strategy_cols[i % 4]:
+                st.markdown(f"**{name}**")
+                st.markdown("• Defined risk" if "Iron" in name or "Lizard" in name else "• Undefined risk")
+                st.markdown("• Directional" if "Bull" in name or "Bear" in name else "• Neutral")
+                st.markdown("• Complex" if "Fly" in name or "Condor" in name else "• Simple")
+                st.markdown("---")
+        
+        # Strategy parameters
+        st.markdown("### ⚙️ Strategy Parameters")
+        strategy_select = st.selectbox("Select Strategy", strategy_names)
+        
+        col1, col2 = st.columns(2)
+        lots = col1.number_input("Number of Lots", 1, 10, 1)
+        expiry_date = col2.date_input("Expiry Date", 
+                                    value=datetime.strptime(st.session_state.config['expiry_date'], "%Y-%m-%d"),
+                                    disabled=True)
+        
+        # Generate strategy
+        if st.button("🔍 Generate Strategy"):
+            # Here you would actually generate the strategy based on inputs
+            st.success(f"Generated {strategy_select} with {lots} lots")
+            # Show some generated strategy details
+            st.markdown("#### Generated Strategy Details")
+            st.markdown("• Entry: XYZ")
+            st.markdown("• Exit: ABC")
+            st.markdown("• Profit Target: 75%")
+            st.markdown("• Stop Loss: 25%")
             
-            if st.session_state['portfolio_summary'].get('Flags'):
-                st.subheader("🚨 Warnings")
-                for flag in st.session_state['portfolio_summary']['Flags']:
-                    st.warning(flag)
+        # Strategy visualizations
+        st.markdown("### 📊 Strategy Visualization")
+        if strategy_details:
+            fig = backend.plot_payoff_diagram(strategy_details, spot_price)
+            st.pyplot(fig)
+            plt.close()
+        else:
+            st.info("No strategy details available for visualization")
+    
+    # Order Manager Tab
+    with tab4:
+        st.markdown("## 📝 Order Manager")
+        
+        # Current order book
+        st.markdown("### 🕒 Live Orders")
+        try:
+            live_orders = backend.get_order_book(st.session_state.config)
+            if live_orders:
+                order_df = pd.DataFrame(live_orders)
+                st.dataframe(order_df, use_container_width=True)
             else:
-                st.success("✅ No risks.")
-else:
-    st.warning("Please log in.")
+                st.info("No live orders found")
+        except:
+            st.warning("Could not retrieve order book")
+        
+        # Positions
+        st.markdown("### 🧾 Current Positions")
+        try:
+            url_positions = f"{st.session_state.config['base_url']}/portfolio/short-term-positions"
+            res_positions = requests.get(url_positions, headers=st.session_state.config['headers'])
+            if res_positions.status_code == 200:
+                positions = res_positions.json()["data"]
+                if positions:
+                    positions_df = pd.DataFrame(positions)
+                    st.dataframe(positions_df, use_container_width=True)
+                else:
+                    st.info("No current positions")
+            else:
+                st.warning("Could not retrieve positions")
+        except Exception as e:
+            st.error(f"Error retrieving positions: {str(e)}")
+        
+        # Place order form
+        st.markdown("### 📥 Place New Order")
+        order_form = st.form("order_form")
+        strategy_name = order_form.selectbox("Strategy", strategies)
+        strategy_index = strategies.index(strategy_name) if strategy_name in strategies else 0
+        
+        # Display selected strategy details
+        if strategy_details and strategy_index < len(strategy_details):
+            selected_detail = strategy_details[strategy_index]
+            display_strategy_card(selected_detail)
+        
+        # Quantity and order type
+        col1, col2 = order_form.columns(2)
+        lots = col1.number_input("Lots", 1, 10, 1)
+        order_type = col2.selectbox("Order Type", ["Limit", "Market"])
+        
+        # Submit button
+        submit = order_form.form_submit_button("🚀 Place Order")
+        if submit:
+            # Here you would actually place the order
+            st.success(f"Placed {order_type} order for {lots} lots of {strategy_name}")
+
+if __name__ == "__main__":
+    main() 
