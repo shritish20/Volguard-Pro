@@ -552,7 +552,7 @@ if st.session_state['authenticated']:
             col2.markdown(f"<div class='metric-card'><div class='metric-title'>Risk on Table</div><div><div class='metric-value'>₹{st.session_state['portfolio_summary'].get('Risk on Table', 0):.2f}</div></div>", unsafe_allow_html=True)
             col2.markdown(f"<div class='metric-card'><div class='metric-title'>Realized P&L</div><div class='metric-value'>₹{st.session_state['portfolio_summary'].get('Realized P&L', 0):.2f}</div><div></div>", unsafe_allow_html=True)
             col2.markdown(f"<div class='metric-card'><div class='metric-title'>Drawdown</div><div><div class='metric-value'>₹{st.session_state['portfolio_summary'].get('Drawdown ₹', 0):.2f}</div></div>", unsafe_allow_html=True)
-            col2.markdown(f"<div class='metric-card'><div class='metric-title'>Portfolio Vega</div><div class='metric-value'>{st.session_state']['portfolio_summary'].get('Portfolio Vega', 0):.2f}</div></div>", unsafe_allow_html=True)
+            col2.markdown(f"<div class='metric-card'><div class='metric-title'>Portfolio Vega</div><div class='metric-value'>{st.session_state'['portfolio_summary'].get('Portfolio Vega', 0):.2f}</div></div>", unsafe_allow_html=True)
             
             st.subheader("Risk Summary")
             if not st.session_state['strategy_df'].empty:
