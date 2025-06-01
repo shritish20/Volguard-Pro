@@ -1407,12 +1407,6 @@ if st.session_state.logged_in and access_token:
                 f"<div class='metric-box'><h3>📊 Sharpe Ratio</h3><div class='value'>{sharpe_ratio:.2f}</div></div>",
                 unsafe_allow_html=True,
             )
-        with col_r3:
-            portfolio_beta = calculate_portfolio_beta(positions, nifty)
-            st.markdown(
-                f"<div class='metric-box'><h3>β Portfolio Beta</h3><div class='value'>{portfolio_beta:.2f}</div></div>",
-                unsafe_allow_html=True,
-            )
         with col_r4:
             margin_pct = (funds_data["used_margin"] / funds_data["total_funds"] * 100) if funds_data["total_funds"] > 0 else 0
             st.markdown(
