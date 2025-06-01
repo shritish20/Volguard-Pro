@@ -1110,7 +1110,7 @@ if st.session_state.logged_in and access_token:
            "P&L": "{:.2f}"
            }).set_properties(**{"background-color": "#1A1C24", "color": "white"})
 
-          st.dataframe(formatted_pos_df, use_container_width=True)
+        st.dataframe(formatted_pos_df, use_container_width=True)
       else:
           st.info("No open positions or trade history found.")
      st.subheader("Risk Actions")
