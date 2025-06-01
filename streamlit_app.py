@@ -579,7 +579,7 @@ if st.session_state['authenticated']:
                                     
                                     if not all_buy_orders_filled:
                                         st.error("Timeout or some BUY orders not filled. Aborting SELL legs.")
-                                        return
+                                            return
                                     
                                     # Refresh funds
                                     funds_info = App.get_user_funds_and_margin(st.session_state['config'], segment="SEC")
