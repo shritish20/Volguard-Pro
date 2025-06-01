@@ -388,7 +388,7 @@ if st.session_state['authenticated']:
             st.dataframe(st.session_state['full_chain_df'])
             eff_df = st.session_state['full_chain_df'].copy()
             eff_df["Theta/Vega"] = eff_df.apply(lambda row: row["Total Theta"] / row["Total Vega"] if row["Total Vega"] != 0 else float('0.0'), axis=1)
-            eff_df = eff_df[["Strike", "Total Theta", "Total Vega", "Theta/Vega"].sort_values("Theta/Vega", ascending=False).dropna()
+            eff_df = eff_df["Strike", "Total Theta", "Total Vega", "Theta/Vega"].sort_values("Theta/Vega", ascending=False).dropna()
             st.subheader("Theta/Vega Ranking")
             st.dataframe(eff_df)
         else:
