@@ -1192,6 +1192,6 @@ with tab6:
             st.warning(flag)
     else:
         st.info(":white_check_mark: No risk flags detected.")
-else:
+
     st.markdown("<h1 style='text-align: center;'>Volguard - Your Trading Copilot</h1>", unsafe_allow_html=True)
     st.info("Please enter your Upstox Access Token in the sidebar to access the dashboard.")
