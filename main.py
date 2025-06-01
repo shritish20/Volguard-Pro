@@ -22,6 +22,7 @@ def get_config(access_token):
         "event_url": "https://raw.githubusercontent.com/shritish20/VolGuard/main/upcoming_events.csv",
         "ivp_url": "https://raw.githubusercontent.com/shritish20/VolGuard/main/ivp.csv",
         "nifty_url": "https://raw.githubusercontent.com/shritish20/VolGuard/main/nifty_50.csv",
+        "total_funds": 2000000,
         "risk_config": {
             "Iron Fly": {"capital_pct": 0.30, "risk_per_trade_pct": 0.01},
             "Iron Condor": {"capital_pct": 0.25, "risk_per_trade_pct": 0.015},
@@ -166,8 +167,8 @@ def market_metrics(option_chain, expiry_date):
     try:
         expiry_dt = datetime.strptime(expiry_date, "%Y-%m-%d")
         days_to_expiry = (expiry_dt - datetime.now()).days
-        call_oi = sum(opt["call_options"]["market_data"]["oi"] for opt in option_chain if "call_options" in opt)
-        put_oi = sum(opt["put_options"]["market_data"]["oi"] for opt in option_chain if "put_options" in opt)
+        call_oi = sum(opt["call_options"]["market_data"]["oi"] for opt in option_chain if "call_options" in opt and "market_data" in opt["call_options"])
+        put_oi = sum(opt["put_options"]["market_data"]["oi"] for opt in option_chain if "put_options" in opt and "market_data" in opt["put_options"])
         pcr = put_oi / call_oi if call_oi != 0 else 0
         strikes = sorted(set(opt["strike_price"] for opt in option_chain))
         max_pain_strike = 0
@@ -271,9 +272,19 @@ def suggest_strategy(regime_label, ivp, iv_minus_rv, days_to_expiry, event_df, e
         strategies = ["Iron Condor", "Jade Lizard"]
         rationale.append("Volatility above average — range-bound strategies offer favorable reward-risk.")
     elif regime_label == "🙂 Neutral Volatility":
-        strategies = ["Jade Lizard", "Bull Put Spread"] if days_to_expiry >= 3 else ["Iron Fly"]
+        if days_to_expiry >= 3:
+            strategies = ["Jade Lizard", "Bull Put Spread"]
+            rationale.append("Market balanced — slight directional bias strategies offer edge.")
+        else:
+            strategies = ["Iron Fly"]
+            rationale.append("Tight expiry — quick theta-based capture via short Iron Fly.")
     elif regime_label == "📉 Low Volatility":
-        strategies = ["Straddle", "Calendar Spread"] if days_to_expiry > 7 else ["Straddle", "ATM Strangle"]
+        if days_to_expiry > 7:
+            strategies = ["Straddle", "Calendar Spread"]
+            rationale.append("Low IV with longer expiry — benefit from potential IV increase.")
+        else:
+            strategies = ["Straddle", "ATM Strangle"]
+            rationale.append("Low IV — premium collection favorable but monitor for breakout risk.")
     if event_impact_score > 0 and not high_impact_event_near:
         strategies = [s for s in strategies if "Iron" in s or "Lizard" in s or "Spread" in s]
     if ivp > 85 and iv_minus_rv > 5:
@@ -307,8 +318,7 @@ def calculate_sharpe_ratio():
         daily_returns = np.random.normal(0.001, 0.01, 252)
         annual_return = np.mean(daily_returns) * 252
         annual_volatility = np.std(daily_returns) * np.sqrt(252)
-        risk_free_rate = 0.06 / 252
-        sharpe_ratio = (annual_return - risk_free_rate) / annual_volatility
+        sharpe_ratio = (annual_return - 0.06 / 252) / annual_volatility
         return round(sharpe_ratio, 2)
     except Exception as e:
         st.warning(f"Exception in calculate_sharpe_ratio: {e}")
@@ -670,6 +680,52 @@ def evaluate_full_risk(trades_df, config, regime_label, vix):
         st.error(f"Exception in evaluate_full_risk: {e}")
         return pd.DataFrame(), {}
 
+def fetch_trade_data(config, full_chain_df):
+    try:
+        url_positions = f"{config['base_url']}/portfolio/short-term-positions"
+        res_positions = requests.get(url_positions, headers=config['headers'])
+        url_trades = f"{config['base_url']}/order/trades/get-trades-for-day"
+        res_trades = requests.get(url_trades, headers=config['headers'])
+        positions = []
+        trades = []
+        if res_positions.status_code == 200:
+            positions = res_positions.json().get("data", [])
+        else:
+            st.warning(f"Error fetching positions: {res_positions.status_code} - {res_positions.text}")
+        if res_trades.status_code == 200:
+            trades = res_trades.json().get("data", [])
+        else:
+            st.warning(f"Error fetching trades: {res_trades.status_code} - {res_trades.text}")
+        trade_counts = {}
+        for trade in trades:
+            instrument = trade.get("instrument_token", "")
+            strat = "Straddle" if "NIFTY" in instrument and ("CE" in instrument or "PE" in instrument) else "Unknown"
+            trade_counts[strat] = trade_counts.get(strat, 0) + 1
+        trades_df_list = []
+        for pos in positions:
+            instrument = pos.get("instrument_token", "")
+            strategy = "Unknown"
+            if pos.get("product") == "D":
+                if pos.get("quantity") < 0 and pos.get("average_price") > 0:
+                    if "CE" in instrument or "PE" in instrument:
+                        strategy = "Straddle"
+                    else:
+                        strategy = "Iron Condor"
+            capital = pos["quantity"] * pos["average_price"]
+            trades_df_list.append({
+                "strategy": strategy,
+                "capital_used": abs(capital),
+                "potential_loss": abs(capital * 0.1),
+                "realized_pnl": pos["pnl"],
+                "trades_today": trade_counts.get(strategy, 0),
+                "sl_hit": pos["pnl"] < -abs(capital * 0.05),
+                "vega": full_chain_df["Total Vega"].mean() if not full_chain_df.empty else 0
+            })
+        return pd.DataFrame(trades_df_list) if trades_df_list else pd.DataFrame()
+    except Exception as e:
+        st.error(f"Exception in fetch_trade_data: {e}")
+        return pd.DataFrame()
+
 def plot_allocation_pie(strategy_df, config):
     if strategy_df.empty:
         st.info("No strategy data to plot allocation.")
@@ -700,158 +756,52 @@ def plot_drawdown_trend(portfolio_summary):
     ax.set_facecolor('#0E1117')
     st.pyplot(fig)
 
-def plot_vol_comparison(seller, hv_7, garch_7d):
-    labels = ['ATM IV', 'Realized Vol (7D)', 'GARCH Vol (7D)']
-    values = [seller["avg_iv"], hv_7, garch_7d]
-    colors = ['#00BFFF', '#32CD32', '#FF4500']
-    fig, ax = plt.subplots(figsize=(8, 5))
-    bars = ax.bar(labels, values, color=colors)
-    for bar in bars:
-        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.4,
-                 f"{bar.get_height():.2f}%", ha='center', va='bottom', color='white')
-    ax.set_title("📊 Volatility Comparison: IV vs RV vs GARCH", color="white")
-    ax.set_ylabel("Annualized Volatility (%)", color="white")
-    ax.grid(axis='y', linestyle='--', alpha=0.6)
+def plot_margin_gauge(funds_data):
+    fig, ax = plt.subplots(figsize=(8, 4))
+    used_pct = (funds_data["used_margin"] / funds_data["total_funds"] * 100) if funds_data["total_funds"] > 0 else 0
+    ax.barh(["Margin Utilization"], [used_pct], color="#00BFFF")
+    ax.set_xlim(0, 100)
+    ax.set_title("Margin Utilization (%)", color="white")
     ax.tick_params(axis='x', colors='white')
     ax.tick_params(axis='y', colors='white')
+    ax.spines['left'].set_color('white')
+    ax.spines['bottom'].set_color('white')
     fig.patch.set_facecolor('#0E1117')
     ax.set_facecolor('#0E1117')
     st.pyplot(fig)
 
-def plot_payoff_diagram(strategy_details, spot_price, config):
-    if not strategy_details:
-        st.warning("No strategy details to plot payoff diagram.")
-        return
-    fig, ax = plt.subplots(figsize=(10, 6))
-    min_strike = min(min(d["strikes"]) for d in strategy_details if d["strikes"]) - 200
-    max_strike = max(max(d["strikes"]) for d in strategy_details if d["strikes"]) + 200
-    strikes = np.linspace(min_strike, max_strike, 200)
-    for detail in strategy_details:
-        payoffs = np.zeros_like(strikes)
-        for order in detail["orders"]:
-            instrument_key = order["instrument_key"]
-            qty = order["quantity"]
-            is_buy = order["transaction_type"] == "BUY"
-            multiplier = 1 if is_buy else -1
-            try:
-                parts = instrument_key.split('|')[1].replace('Nifty 50', '')
-                strike_str = ''.join(filter(str.isdigit, parts))
-                order_strike = float(strike_str)
-            except Exception:
-                order_strike = detail["strikes"][detail["orders"].index(order)]
-            is_call = "CE" in instrument_key
-            price = order.get("current_price", 0)
-            if is_call:
-                payoff = multiplier * (np.maximum(0, strikes - order_strike) - price)
-            else:
-                payoff = multiplier * (np.maximum(0, order_strike - strikes) - price)
-            payoffs += payoff * (qty / config["lot_size"])
-        ax.plot(strikes, payoffs, label=detail["strategy"], linewidth=2)
-    ax.axvline(spot_price, linestyle="--", color="yellow", label=f"Spot Price: {spot_price:.0f}")
-    ax.axhline(0, linestyle="--", color="red", label="Breakeven")
-    ax.set_title("📈 Payoff Diagram", color="white")
-    ax.set_xlabel("Underlying Price", color="white")
-    ax.set_ylabel("Payoff (₹)", color="white")
-    ax.legend()
-    ax.grid(True, linestyle=':', alpha=0.6)
-    ax.tick_params(axis='x', colors='white')
-    ax.tick_params(axis='y', colors='white')
-    fig.patch.set_facecolor('#0E1117')
-    ax.set_facecolor('#0E1117')
-    st.pyplot(fig)
-
-def plot_chain_analysis(full_chain_df):
-    if full_chain_df.empty:
-        st.warning("No option chain data to plot.")
-        return
-    fig, axes = plt.subplots(2, 2, figsize=(16, 10))
-    line_color_1 = "#8A2BE2"
-    line_color_2 = "#3CB371"
-    line_color_3 = "#FFD700"
-    bar_palette = "viridis"
-    sns.lineplot(data=full_chain_df, x="Strike", y="IV Skew", ax=axes[0, 0], marker="o", color=line_color_1)
-    axes[0, 0].set_title("IV Skew", color="white")
-    axes[0, 0].axhline(0, linestyle='--', color="gray")
-    axes[0, 0].tick_params(axis='x', colors='white', rotation=45)
-    axes[0, 0].tick_params(axis='y', colors='white')
-    axes[0, 0].set_xlabel("Strike", color="white")
-    axes[0, 0].set_ylabel("IV Skew", color="white")
-    sns.lineplot(data=full_chain_df, x="Strike", y="Total Theta", ax=axes[0, 1], marker="o", color=line_color_2)
-    axes[0, 1].set_title("Total Theta", color="white")
-    axes[0, 1].tick_params(axis='x', colors='white', rotation=45)
-    axes[0, 1].tick_params(axis='y', colors='white')
-    axes[0, 1].set_xlabel("Strike", color="white")
-    axes[0, 1].set_ylabel("Total Theta", color="white")
-    sns.lineplot(data=full_chain_df, x="Strike", y="Straddle Price", ax=axes[1, 0], marker="o", color=line_color_3)
-    axes[1, 0].set_title("Straddle Price", color="white")
-    axes[1, 0].tick_params(axis='x', colors='white', rotation=45)
-    axes[1, 0].tick_params(axis='y', colors='white')
-    axes[1, 0].set_xlabel("Strike", color="white")
-    axes[1, 0].set_ylabel("Straddle Price", color="white")
-    sns.barplot(data=full_chain_df, x="Strike", y="Total OI", ax=axes[1, 1], palette=bar_palette)
-    axes[1, 1].set_title("Total OI", color="white")
-    axes[1, 1].tick_params(axis='x', colors='white', rotation=45)
-    axes[1, 1].tick_params(axis='y', colors='white')
-    axes[1, 1].set_xlabel("Strike", color="white")
-    axes[1, 1].set_ylabel("Total OI", color="white")
-    fig.patch.set_facecolor('#0E1117')
-    for ax in axes.flatten():
-        ax.set_facecolor('#0E1117')
-        ax.spines['left'].set_color('white')
-        ax.spines['bottom'].set_color('white')
-        ax.spines['right'].set_color('white')
-        ax.spines['top'].set_color('white')
-    plt.tight_layout()
-    st.pyplot(fig)
-
-def fetch_trade_data(config, full_chain_df):
+def exit_all_positions(config):
     try:
-        url_positions = f"{config['base_url']}/portfolio/short-term-positions"
-        res_positions = requests.get(url_positions, headers=config['headers'])
-        url_trades = f"{config['base_url']}/order/trades/get-trades-for-day"
-        res_trades = requests.get(url_trades, headers=config['headers'])
-        positions = []
-        trades = []
-        if res_positions.status_code == 200:
-            positions = res_positions.json().get("data", [])
-        else:
-            st.warning(f"Error fetching positions: {res_positions.status_code} - {res_positions.text}")
-        if res_trades.status_code == 200:
-            trades = res_trades.json().get("data", [])
-        else:
-            st.warning(f"Error fetching trades: {res_trades.status_code} - {res_trades.text}")
-        trade_counts = {}
-        for trade in trades:
-            instrument = trade.get("instrument_token", "")
-            strat = "Straddle" if "NIFTY" in instrument and ("CE" in instrument or "PE" in instrument) else "Unknown"
-            trade_counts[strat] = trade_counts.get(strat, 0) + 1
-        trades_df_list = []
-        for pos in positions:
-            instrument = pos.get("instrument_token", "")
-            strategy = "Unknown"
-            if pos.get("product") == "D" and pos.get("quantity") < 0 and pos.get("average_price") > 0:
-                strategy = "Straddle" if "CE" in instrument or "PE" in instrument else "Iron Condor"
-            capital = pos["quantity"] * pos["average_price"]
-            trades_df_list.append({
-                "strategy": strategy,
-                "capital_used": abs(capital),
-                "potential_loss": abs(capital * 0.1),
-                "realized_pnl": pos["pnl"],
-                "trades_today": trade_counts.get(strategy, 0),
-                "sl_hit": pos["pnl"] < -abs(capital * 0.05),
-                "vega": full_chain_df["Total Vega"].mean() if not full_chain_df.empty else 0
-            })
-        return pd.DataFrame(trades_df_list) if trades_df_list else pd.DataFrame()
+        url = f"{config['base_url']}/order/positions/exit?segment=EQ"
+        res = requests.post(url, headers=config['headers'])
+        if res.status_code == 200:
+            data = res.json()
+            if data.get("status") == "success":
+                order_ids = data.get("data", {}).get("order_ids", [])
+                st.success(f"Successfully initiated exit for {len(order_ids)} positions.")
+                return order_ids
+            st.error(f"Unexpected response status: {data}")
+            return []
+        elif res.status_code == 400:
+            errors = res.json().get("errors", [])
+            for error in errors:
+                if error.get("errorCode") == "UDAPI1108":
+                    st.warning("No open positions to exit.")
+                    return []
+            st.error("Exit failed due to unknown reason.")
+            return []
+        st.error(f"Error exiting positions: {res.status_code} - {res.text}")
+        return []
     except Exception as e:
-        st.error(f"Exception in fetch_trade_data: {e}")
-        return pd.DataFrame()
+        st.error(f"Exception in exit_all_positions: {e}")
+        return []
 
 def logout(config):
     try:
         url = f"{config['base_url']}/logout"
         res = requests.delete(url, headers=config['headers'])
         if res.status_code == 200:
-            st.success("Successfully logged out.")
+            st.success("Logged out successfully.")
             st.session_state.access_token = ""
             st.session_state.logged_in = False
             st.cache_data.clear()
@@ -860,17 +810,18 @@ def logout(config):
     except Exception as e:
         st.error(f"Exception in logout: {e}")
 
-# --- Main App Logic ---
+# --- Streamlit UI Setup ---
 st.set_page_config(page_title="Volguard - Your Trading Copilot", layout="wide", initial_sidebar_state="expanded")
 st.markdown(
     """
     <style>
     .main { background-color: #0E1117; color: white; }
     .metric-box { background-color: #1A1C24; border-radius: 8px; padding: 15px; margin-bottom: 10px; color: white; }
-    .metric-box h3 { color: #6495ED; margin-bottom: 5px; font-size: 1em; }
+    .metric-box h3 { color: #6495ED; font-size: 1em; margin-bottom: 5px; }
     .metric-box .value { font-size: 1.8em; font-weight: bold; color: #00BFFF; }
     </style>
-    """, unsafe_allow_html=True)
+    """, unsafe_allow_html=True
+)
 
 if 'access_token' not in st.session_state:
     st.session_state.access_token = ""
@@ -909,32 +860,40 @@ if st.session_state.logged_in and access_token:
         option_chain = fetch_option_chain(config)
         if not option_chain:
             st.error("Failed to fetch option chain data.")
-            return None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None
+            return None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None
         spot_price = option_chain[0]["underlying_spot_price"]
         vix, nifty = get_indices_quotes(config)
         if not vix or not nifty:
             st.error("Failed to fetch India VIX or Nifty 50 data.")
-            return None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None
+            return None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None
         seller = extract_seller_metrics(option_chain, spot_price)
         if not seller:
             st.error("Failed to extract seller metrics.")
-            return None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None
+            return None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None
         full_chain_df = full_chain_table(option_chain, spot_price)
         market = market_metrics(option_chain, config['expiry_date'])
         ivp = load_ivp(config, seller["avg_iv"])
         hv_7, garch_7d, iv_rv_spread = calculate_volatility(config, seller["avg_iv"])
         iv_skew_slope = calculate_iv_skew_slope(full_chain_df)
-        regime_score, regime, regime_note, regime_explanation = calculate_regime(seller["avg_iv"], ivp, hv_7, garch_7d, seller["straddle_price"], spot_price, market["pcr"], vix, iv_skew_slope)
+        regime_score, regime, regime_note, regime_explanation = calculate_regime(
+            seller["avg_iv"], ivp, hv_7, garch_7d, seller["straddle_price"], spot_price, market["pcr"], vix, iv_skew_slope)
         event_df = load_upcoming_events(config)
-        strategies, strategy_rationale, event_warning = suggest_strategy(regime, ivp, iv_rv_spread, market['days_to_expiry'], event_df, config['expiry_date'], seller["straddle_price"], spot_price)
+        strategies, strategy_rationale, event_warning = suggest_strategy(
+            regime, ivp, iv_rv_spread, market['days_to_expiry'], event_df, config['expiry_date'], seller["straddle_price"], spot_price)
         strategy_details = [get_strategy_details(strat, option_chain, spot_price, config, lots=1) for strat in strategies if get_strategy_details(strat, option_chain, spot_price, config, lots=1)]
         trades_df = fetch_trade_data(config, full_chain_df)
         strategy_df, portfolio_summary = evaluate_full_risk(trades_df, config, regime, vix)
         funds_data = get_funds_and_margin(config)
         sharpe_ratio = calculate_sharpe_ratio()
-        return (option_chain, spot_price, vix, nifty, seller, full_chain_df, market, ivp, hv_7, garch_7d, iv_rv_spread, iv_skew_slope, regime_score, regime, regime_note, regime_explanation, event_df, strategies, strategy_rationale, event_warning, strategy_details, trades_df, strategy_df, portfolio_summary, funds_data, sharpe_ratio)
+        return (option_chain, spot_price, vix, nifty, seller, full_chain_df, market,
+                ivp, hv_7, garch_7d, iv_rv_spread, iv_skew_slope, regime_score, regime,
+                regime_note, regime_explanation, event_df, strategies, strategy_rationale,
+                event_warning, strategy_details, trades_df, strategy_df, portfolio_summary, funds_data, sharpe_ratio)
     
-    (option_chain, spot_price, vix, nifty, seller, full_chain_df, market, ivp, hv_7, garch_7d, iv_rv_spread, iv_skew_slope, regime_score, regime, regime_note, regime_explanation, event_df, strategies, strategy_rationale, event_warning, strategy_details, trades_df, strategy_df, portfolio_summary, funds_data, sharpe_ratio) = load_all_data(config)
+    (option_chain, spot_price, vix, nifty, seller, full_chain_df, market,
+     ivp, hv_7, garch_7d, iv_rv_spread, iv_skew_slope, regime_score, regime,
+     regime_note, regime_explanation, event_df, strategies, strategy_rationale,
+     event_warning, strategy_details, trades_df, strategy_df, portfolio_summary, funds_data, sharpe_ratio) = load_all_data(config)
     
     if option_chain is None:
         st.stop()
@@ -960,7 +919,7 @@ if st.session_state.logged_in and access_token:
     with col8:
         st.markdown(f"<div class='metric-box'><h3>PCR</h3><div class='value'>{market['pcr']:.2f}</div></div>", unsafe_allow_html=True)
     
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["Dashboard", "Option Chain Analysis", "Strategy Suggestions", "Risk & Portfolio", "Place Orders", "Risk Dashboard"])
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["Dashboard", "Option Chain Analysis", "Strategy Suggestions", "Risk & Portfolio", "Place Orders", "Risk Management Dashboard"])
     
     with tab1:
         st.subheader("Volatility Landscape")
@@ -983,7 +942,7 @@ if st.session_state.logged_in and access_token:
                 st.warning(event_warning)
         else:
             st.info("No upcoming events before expiry.")
-    
+
     with tab2:
         st.subheader("Option Chain Analysis")
         plot_chain_analysis(full_chain_df)
@@ -994,9 +953,9 @@ if st.session_state.logged_in and access_token:
         eff_df["Theta/Vega"] = eff_df["Total Theta"] / eff_df["Total Vega"]
         eff_df = eff_df[["Strike", "Total Theta", "Total Vega", "Theta/Vega"]].sort_values("Theta/Vega", ascending=False)
         st.dataframe(eff_df.style.format(precision=2).set_properties(**{"background-color": "#1A1C24", "color": "white"}), use_container_width=True)
-    
+
     with tab3:
-        st.markdown(f"<div class='metric-box'><h3>Volatility Regime: {regime}</h3><p style='color: #6495ED;'>Score: {regime_score:.2f}</p><p>{regime_note}</p><p><i>{regime_explanation}</i></p></div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='metric-box'><h3>Regime: {regime}</h3><p style='color: #6495ED;'>Score: {regime_score:.2f}</p><p>{regime_note}</p><p><i>{regime_explanation}</i></p></div>", unsafe_allow_html=True)
         st.subheader("Recommended Strategies")
         if strategies:
             st.success(f"**Suggested Strategies:** {', '.join(strategies)}")
@@ -1015,23 +974,23 @@ if st.session_state.logged_in and access_token:
                     })
                     st.dataframe(order_df.style.set_properties(**{"background-color": "#1A1C24", "color": "white"}), use_container_width=True)
                     margin = calculate_strategy_margin(config, detail)
-                    st.markdown(f"💸 Estimated Margin Required: ₹{margin:.2f}")
+                    st.markdown(f"<div class='metric-box'><h4>Estimated Margin Required</h4> ₹{margin:.2f}</div>", unsafe_allow_html=True)
                     lots = st.number_input(f"Lots for {strat}", min_value=1, value=1, step=1, key=f"lots_{strat}")
-                    if st.button(f"🚀 Place {strat} Order", key=f"place_{strat}"):
+                    if st.button(f"Place {strat} Order", key=f"place_{strat}"):
                         updated_detail = get_strategy_details(strat, option_chain, spot_price, config, lots=lots)
                         if updated_detail:
                             success = place_multi_leg_orders(config, updated_detail["orders"])
                             if success:
-                                st.success(f"✅ {strat} executed with margin ₹{margin:.2f}")
+                                st.success(f"Placed {strat} order with {lots} lots!")
                             else:
-                                st.error(f"❌ Failed to place {strat} order.")
+                                st.error(f"Failed to place {strat} order.")
                         else:
-                            st.error(f"❌ Unable to generate {strat} order details.")
+                            st.error(f"Unable to generate order details for {strat}.")
                 else:
-                    st.error(f"⚠ No details found for {strat}")
+                    st.error(f"Error: No details found for {strat}.")
         else:
             st.info("No strategies suggested for current market conditions.")
-    
+
     with tab4:
         st.subheader("Portfolio Summary")
         col_p1, col_p2, col_p3, col_p4 = st.columns(4)
@@ -1046,16 +1005,17 @@ if st.session_state.logged_in and access_token:
         st.subheader("Strategy Risk Table")
         if not strategy_df.empty:
             st.dataframe(strategy_df.style.set_properties(**{"background-color": "#1A1C24", "color": "white"}), use_container_width=True)
+            st.subheader("Capital Allocation")
             plot_allocation_pie(strategy_df, config)
         if portfolio_summary.get("Flags"):
             st.subheader("Risk Alerts")
             for flag in portfolio_summary["Flags"]:
                 st.error(flag)
-    
+
     with tab5:
         st.markdown("<h2 style='color: #1E90FF;'>🚀 Place Strategy Orders</h2>", unsafe_allow_html=True)
         st.subheader("Select Strategies to Execute")
-        selected_strats = st.multiselect("Choose Strategies:", strategies, default=strategies[:2])
+        selected_strats = st.multiselect("Choose strategies:", strategies, default=strategies[:2])
         execute_all = st.checkbox("✅ Execute All Selected Strategies")
         if execute_all and st.button("🚀 Execute All"):
             for strat in selected_strats:
@@ -1079,14 +1039,14 @@ if st.session_state.logged_in and access_token:
             detail = get_strategy_details(selected_strat, option_chain, spot_price, config, lots)
             if detail:
                 order_df = pd.DataFrame({
-                    "Instrument": [order["instrument_key"] for order in detail["orders"]],
-                    "Type": [order["transaction_type"] for order in detail["orders"]],
+                    "Instrument": [o["instrument_key"] for o in detail["orders"]],
+                    "Type": [o["transaction_type"] for o in detail["orders"]],
                     "Quantity": [config["lot_size"] for _ in detail["orders"]],
-                    "LTP": [order.get("current_price", 0) for order in detail["orders"]]
+                    "LTP": [o.get("current_price", 0) for o in detail["orders"]]
                 })
                 st.dataframe(order_df.style.set_properties(**{"background-color": "#1A1C24", "color": "white"}), use_container_width=True)
                 margin = calculate_strategy_margin(config, detail)
-                st.markdown(f"<div class='metric-box'><h3>Margin Required</h3><div class='value'>₹{margin:.2f}</div></div>", unsafe_allow_html=True)
+                st.markdown(f"<div class='metric-box'><h3>Estimated Margin</h3><div class='value'>₹{margin:.2f}</div></div>", unsafe_allow_html=True)
                 if st.button(f"🚀 Place {selected_strat} Order", key="manual_place"):
                     success = place_multi_leg_orders(config, detail["orders"])
                     if success:
@@ -1095,73 +1055,59 @@ if st.session_state.logged_in and access_token:
                         st.error(f"❌ Failed to place {selected_strat} order.")
             else:
                 st.error(f"⚠ No details found for {selected_strat}")
-    
-    
-with tab6:
-    st.markdown("<h2 style='color: #1E90FF;'>📊 Risk Management Dashboard</h2>", unsafe_allow_html=True)
-    
-    col_r1, col_r2, col_r3, col_r4 = st.columns(4)
-    with col_r1:
-        st.markdown(f"<div class='metric-box'><h3>Total Risk</h3><div class='value'>₹{portfolio_summary['Risk on Table']:.2f}</div></div>", unsafe_allow_html=True)
-    with col_r2:
-        st.markdown(f"<div class='metric-box'><h3>Sharpe Ratio</h3><div class='value'>{sharpe_ratio:.2f}</div></div>", unsafe_allow_html=True)
-    with col_r3:
-        margin_pct = (funds_data["used_margin"] / funds_data["total_funds"] * 100) if funds_data["total_funds"] > 0 else 0
-        st.markdown(f"<div class='metric-box'><h3>Margin Utilization</h3><div class='value'>{margin_pct:.2f}%</div></div>", unsafe_allow_html=True)
-    with col_r4:
-        st.markdown(f"<div class='metric-box'><h3>Max Drawdown</h3><div class='value'>₹{portfolio_summary['Max Drawdown Allowed']:.2f}</div></div>", unsafe_allow_html=True)
-    
-    st.subheader("🧮 Greeks Exposure")
-    total_delta, total_theta, total_vega, total_gamma = 0.0, 0.0, 0.0, 0.0
-    
-    for pos in trades_df.to_dict("records"):
-        try:
-            instrument_key = pos.get("instrument_token", "")
-            greeks = get_option_greeks(config, [instrument_key]).get(instrument_key, {})
-            total_delta += greeks.get("delta", 0) * pos.get("capital_used", 0)
-            total_theta += greeks.get("theta", 0) * pos.get("capital_used", 0)
-            total_vega += greeks.get("vega", 0) * pos.get("capital_used", 0)
-            total_gamma += greeks.get("gamma", 0) * pos.get("capital_used", 0)
-        except Exception as e:
-            st.warning(f"Error calculating Greeks: {e}")
-            continue
 
-    col_g1, col_g2, col_g3, col_g4 = st.columns(4)
-    with col_g1:
-        st.markdown(f"<div class='metric-box'><h4>Delta</h4>{total_delta:.2f}</div>", unsafe_allow_html=True)
-    with col_g2:
-        st.markdown(f"<div class='metric-box'><h4>Theta</h4>₹{total_theta:.2f}</div>", unsafe_allow_html=True)
-    with col_g3:
-        st.markdown(f"<div class='metric-box'><h4>Vega</h4>₹{total_vega:.2f}</div>", unsafe_allow_html=True)
-        if total_vega > 1000:
-            st.error("⚠ High Vega exposure! Risk of volatility spike.")
-    with col_g4:
-        st.markdown(f"<div class='metric-box'><h4>Gamma</h4>{total_gamma:.6f}</div>", unsafe_allow_html=True)
+    with tab6:
+        st.markdown("<h2 style='color: #1E90FF;'>🛡️ Risk Management Dashboard</h2>", unsafe_allow_html=True)
+        col_r1, col_r2, col_r3, col_r4 = st.columns(4)
+        with col_r1:
+            st.markdown(f"<div class='metric-box'><h3>Total Risk</h3><div class='value'>₹{portfolio_summary['Risk on Table']:.2f}</div></div>", unsafe_allow_html=True)
+        with col_r2:
+            st.markdown(f"<div class='metric-box'><h3>Sharpe Ratio</h3><div class='value'>{sharpe_ratio:.2f}</div></div>", unsafe_allow_html=True)
+        with col_r3:
+            margin_pct = (funds_data["used_margin"] / funds_data["total_funds"] * 100) if funds_data["total_funds"] > 0 else 0
+            st.markdown(f"<div class='metric-box'><h3>Margin Utilization</h3><div class='value'>{margin_pct:.2f}%</div></div>", unsafe_allow_html=True)
+        with col_r4:
+            st.markdown(f"<div class='metric-box'><h3>Max Drawdown</h3><div class='value'>₹{portfolio_summary['Max Drawdown Allowed']:.2f}</div></div>", unsafe_allow_html=True)
+        st.subheader("Greeks Exposure")
+        total_delta, total_theta, total_vega, total_gamma = 0.0, 0.0, 0.0, 0.0
+        for pos in trades_df.to_dict("records"):
+            try:
+                instrument_key = pos.get("instrument_token", "")
+                greeks = get_option_greeks(config, [instrument_key]).get(instrument_key, {})
+                total_delta += greeks.get("delta", 0) * pos.get("capital_used", 0)
+                total_theta += greeks.get("theta", 0) * pos.get("capital_used", 0)
+                total_vega += greeks.get("vega", 0) * pos.get("capital_used", 0)
+                total_gamma += greeks.get("gamma", 0) * pos.get("capital_used", 0)
+            except Exception as e:
+                st.warning(f"Error calculating Greeks: {e}")
+                continue
+        col_g1, col_g2, col_g3, col_g4 = st.columns(4)
+        with col_g1:
+            st.markdown(f"<div class='metric-box'><h4>Delta</h4>{total_delta:.2f}</div>", unsafe_allow_html=True)
+        with col_g2:
+            st.markdown(f"<div class='metric-box'><h4>Theta</h4>₹{total_theta:.2f}</div>", unsafe_allow_html=True)
+        with col_g3:
+            st.markdown(f"<div class='metric-box'><h4>Vega</h4>₹{total_vega:.2f}</div>", unsafe_allow_html=True)
+            if total_vega > 1000:
+                st.error("⚠ High Vega exposure! Risk of volatility spike.")
+        with col_g4:
+            st.markdown(f"<div class='metric-box'><h4>Gamma</h4>{total_gamma:.6f}</div>", unsafe_allow_html=True)
+        st.subheader("Capital Allocation")
+        plot_allocation_pie(strategy_df, config)
+        st.subheader("Drawdown Control")
+        plot_drawdown_trend(portfolio_summary)
+        max_drawdown_limit = 0.05 if vix > 20 else 0.03 if vix > 12 else 0.02
+        if portfolio_summary["Drawdown %"] > max_drawdown_limit * 100:
+            st.error(f"⚠ Drawdown ({portfolio_summary['Drawdown %']:.2f}%) exceeds limit ({max_drawdown_limit*100:.2f}%)!")
 
-    st.subheader("💰 Capital Allocation")
-    plot_allocation_pie(strategy_df, config)
-
-    st.subheader("📉 Drawdown Control")
-    plot_drawdown_trend(portfolio_summary)
-    
-    max_drawdown_limit = 0.05 if vix > 20 else 0.03 if vix > 12 else 0.02
-    if portfolio_summary["Drawdown %"] > max_drawdown_limit * 100:
-        st.error(f"⚠ Drawdown ({portfolio_summary['Drawdown %']:.2f}%) exceeds limit ({max_drawdown_limit*100:.2f}%)!")
-
-    st.subheader("💼 All Positions")
-    if not trades_df.empty:
-        pos_df = trades_df[["strategy", "capital_used", "realized_pnl", "Vega"]]
-        pos_df.columns = ["Strategy", "Capital Used", "P&L", "Vega"]
-        formatted_pos_df = pos_df.style.format({
-            "Capital Used": "{:.2f}",
-            "P&L": "{:.2f}",
-            "Vega": "{:.2f}"
-        }).set_properties(**{"background-color": "#1A1C24", "color": "white"})
-        st.dataframe(formatted_pos_df, use_container_width=True)
-    else:
-        st.info("No open positions or trade data available.")
-
-    st.subheader("🚨 Risk Actions")
-    if st.button("Exit All Positions", key="exit_all_pos"):
-        if st.checkbox("Confirm Exit All Positions", key="confirm_exit"):
-            exit_all_positions(config)
+        st.subheader("All Positions")
+        if not trades_df.empty:
+            pos_df = trades_df[["strategy", "capital_used", "realized_pnl"]]
+            pos_df.columns = ["Strategy", "Capital Used", "P&L"]
+            st.dataframe(pos_df.style.format({"Capital Used": "{:.2f}", "P&L": "{:.2f}").set_properties(**{"background-color": "#1A1C24", "color": "white"}), use_container_width=True)
+        else:
+            st.info("No open positions.")
+        st.subheader("Risk Actions")
+        if st.button("Exit All Positions", key="exit_all_pos"):
+            if st.checkbox("Confirm Exit All Positions", key="confirm_exit"):
+                exit_all_positions(config)
