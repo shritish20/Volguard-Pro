@@ -1143,7 +1143,13 @@ if st.session_state.logged_in and access_token:
             pos_df = pd.DataFrame(positions)
             pos_df = pos_df[["instrument_token", "quantity", "average_price", "pnl"]]
             pos_df.columns = ["Instrument", "Quantity", "Avg Price", "P&L"]
-            st.dataframe(pos_df.style.format({"Avg Price": "{:.2f}", "P&L": "{:.2f}", "Quantity": "{:.0f}").set_properties(**{"background-color": "#1A1C24", "color": "white"}), use_container_width=True)
+            formatted_pos_df = pos_df.style.format({
+                 "Avg Price": "{:.2f}",
+                 "P&L": "{:.2f}",
+                 "Quantity": "{:.0f}"
+            }).set_properties(**{"background-color": "#1A1C24", "color": "white"})
+
+        st.dataframe(formatted_pos_df, use_container_width=True)
         else:
             st.info("No open positions.")
         st.subheader("Risk Actions")
