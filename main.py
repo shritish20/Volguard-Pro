@@ -1111,7 +1111,7 @@ if st.session_state.logged_in and access_token:
            }).set_properties(**{"background-color": "#1A1C24", "color": "white"})
 
         st.dataframe(formatted_pos_df, use_container_width=True)
-     else:
+    else:
           st.info("No open positions or trade history found.")
      st.subheader("Risk Actions")
      if st.button("Exit All Positions", key="exit_all_pos"):
