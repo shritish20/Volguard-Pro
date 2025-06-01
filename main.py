@@ -1097,21 +1097,21 @@ if st.session_state.logged_in and access_token:
                 st.error(f"⚠ No details found for {selected_strat}")
     
     with tab6:
-    st.markdown("<h2 style='color: #1E90FF;'>📊 Risk Management Dashboard</h2>", unsafe_allow_html=True)
+         st.markdown("<h2 style='color: #1E90FF;'>📊 Risk Management Dashboard</h2>", unsafe_allow_html=True)
     
-    col_r1, col_r2, col_r3, col_r4 = st.columns(4)
-    with col_r1:
-        st.markdown(f"<div class='metric-box'><h3>Total Risk</h3><div class='value'>₹{portfolio_summary['Risk on Table']:.2f}</div></div>", unsafe_allow_html=True)
-    with col_r2:
-        st.markdown(f"<div class='metric-box'><h3>Sharpe Ratio</h3><div class='value'>{sharpe_ratio:.2f}</div></div>", unsafe_allow_html=True)
-    with col_r3:
-        margin_pct = (funds_data["used_margin"] / funds_data["total_funds"] * 100) if funds_data["total_funds"] > 0 else 0
-        st.markdown(f"<div class='metric-box'><h3>Margin Utilization</h3><div class='value'>{margin_pct:.2f}%</div></div>", unsafe_allow_html=True)
-    with col_r4:
-        st.markdown(f"<div class='metric-box'><h3>Max Drawdown</h3><div class='value'>₹{portfolio_summary['Max Drawdown Allowed']:.2f}</div></div>", unsafe_allow_html=True)
+         col_r1, col_r2, col_r3, col_r4 = st.columns(4)
+         with col_r1:
+              st.markdown(f"<div class='metric-box'><h3>Total Risk</h3><div class='value'>₹{portfolio_summary['Risk on Table']:.2f}</div></div>", unsafe_allow_html=True)
+         with col_r2:
+              st.markdown(f"<div class='metric-box'><h3>Sharpe Ratio</h3><div class='value'>{sharpe_ratio:.2f}</div></div>", unsafe_allow_html=True)
+        with col_r3:
+             margin_pct = (funds_data["used_margin"] / funds_data["total_funds"] * 100) if funds_data["total_funds"] > 0 else 0
+             st.markdown(f"<div class='metric-box'><h3>Margin Utilization</h3><div class='value'>{margin_pct:.2f}%</div></div>", unsafe_allow_html=True)
+        with col_r4:
+             st.markdown(f"<div class='metric-box'><h3>Max Drawdown</h3><div class='value'>₹{portfolio_summary['Max Drawdown Allowed']:.2f}</div></div>", unsafe_allow_html=True)
     
-    st.subheader("🧮 Greeks Exposure")
-    total_delta, total_theta, total_vega, total_gamma = 0.0, 0.0, 0.0, 0.0
+          st.subheader("🧮 Greeks Exposure")
+          total_delta, total_theta, total_vega, total_gamma = 0.0, 0.0, 0.0, 0.0
     
     for pos in trades_df.to_dict("records"):
         try:
