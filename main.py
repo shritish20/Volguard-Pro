@@ -1102,12 +1102,18 @@ if st.session_state.logged_in and access_token:
 
         st.subheader("All Positions")
         if not trades_df.empty:
-            pos_df = trades_df[["strategy", "capital_used", "realized_pnl"]]
-            pos_df.columns = ["Strategy", "Capital Used", "P&L"]
-            st.dataframe(pos_df.style.format({"Capital Used": "{:.2f}", "P&L": "{:.2f}").set_properties(**{"background-color": "#1A1C24", "color": "white"}), use_container_width=True)
-        else:
-            st.info("No open positions.")
-        st.subheader("Risk Actions")
-        if st.button("Exit All Positions", key="exit_all_pos"):
-            if st.checkbox("Confirm Exit All Positions", key="confirm_exit"):
+           pos_df = trades_df[["strategy", "capital_used", "realized_pnl"]]
+           pos_df.columns = ["Strategy", "Capital Used", "P&L"]
+    
+           formatted_pos_df = pos_df.style.format({
+           "Capital Used": "{:.2f}",
+           "P&L": "{:.2f}"
+           }).set_properties(**{"background-color": "#1A1C24", "color": "white"})
+
+          st.dataframe(formatted_pos_df, use_container_width=True)
+      else:
+          st.info("No open positions or trade history found.")
+     st.subheader("Risk Actions")
+     if st.button("Exit All Positions", key="exit_all_pos"):
+     if st.checkbox("Confirm Exit All Positions", key="confirm_exit"):
                 exit_all_positions(config)
