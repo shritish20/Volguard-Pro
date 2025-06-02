@@ -982,6 +982,14 @@ def logout(config):
 
 # --- Streamlit UI Setup ---
 st.set_page_config(page_title="Volguard - Your Trading Copilot", layout="wide", initial_sidebar_state="expanded")
+
+# 👇 Add this block here
+from streamlit_autorefresh import st_autorefresh
+
+# Auto-refresh every 3 minutes
+st_autorefresh(interval=2 * 60 * 1000, key="refresh")
+
+st.info("⏳ Auto-refreshing every 2 minutes to fetch updated market data.")
 st.markdown(
     """
     <style>
