@@ -223,7 +223,7 @@ def market_metrics(option_chain, expiry_date):
     except Exception as e:
         st.warning(f":warning: Exception in market_metrics: {e}")
         return {"days_to_expiry": 0, "pcr": 0, "max_pain": 0}
-
+        
 @st.cache_data(ttl=3600)
 def calculate_volatility(config, seller_avg_iv):
     try:
@@ -233,7 +233,7 @@ def calculate_volatility(config, seller_avg_iv):
         df = df.sort_values('Date')
         df['Close'] = pd.to_numeric(df['Close'], errors='coerce')
         df['Log_Returns'] = np.log(df['Close'] / df['Close'].shift(1)).dropna()
-        hv_7 = np.std(df["Log_Returns"][-7:]) * np.sqrt(249) * 100
+        hv_7 = np.std(df["Log_Returns"][-7:]) * np.sqrt(252) * 100
         model = arch_model(df["Log_Returns"], vol="Garch", p=1, q=1)
         res = model.fit(disp="off")
         forecast = res.forecast(horizon=7)
@@ -241,7 +241,7 @@ def calculate_volatility(config, seller_avg_iv):
         iv_rv_spread = round(seller_avg_iv - hv_7, 2)
         return hv_7, garch_7d, iv_rv_spread
     except Exception as e:
-        st.warning(f":warning: Exception in calculate_volatility: {e}")
+        st.warning(f"Exception in calculate_volatility: {e}")
         return 0, 0, 0
 
 def calculate_iv_skew_slope(full_chain_df):
