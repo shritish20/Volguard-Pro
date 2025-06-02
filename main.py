@@ -22,7 +22,7 @@ def get_config(access_token):
         "event_url": "https://raw.githubusercontent.com/shritish20/VolGuard/main/upcoming_events.csv",
         "ivp_url": "https://raw.githubusercontent.com/shritish20/VolGuard/main/ivp.csv",
         "nifty_url": "https://raw.githubusercontent.com/shritish20/VolGuard/main/nifty_50.csv",
-        "total_funds": 2000000,
+        "total_capital": 2000000,
         "risk_config": {
             "Iron Fly": {"capital_pct": 0.30, "risk_per_trade_pct": 0.01},
             "Iron Condor": {"capital_pct": 0.25, "risk_per_trade_pct": 0.015},
@@ -59,7 +59,6 @@ def get_config(access_token):
 
     config['expiry_date'] = get_next_expiry_internal()
     return config
-
 
 # --- Data Fetching and Calculation Functions ---
 @st.cache_data(ttl=300)
@@ -106,7 +105,7 @@ def load_upcoming_events(config):
         filtered = df.loc[mask, ["Datetime", "Event", "Classification", "Forecast", "Prior"]]
         return filtered.sort_values("Datetime").reset_index(drop=True)
     except Exception as e:
-        st.warning(f"âš  Failed to load upcoming events: {e}")
+        st.warning(f"âš ï¸ Failed to load upcoming events: {e}")
         return pd.DataFrame(columns=["Datetime", "Event", "Classification", "Forecast", "Prior"])
 
 @st.cache_data(ttl=3600)
@@ -134,7 +133,7 @@ def extract_seller_metrics(option_chain, spot_price):
             "vega": call["option_greeks"]["vega"] + put["option_greeks"]["vega"],
             "delta": call["option_greeks"]["delta"] + put["option_greeks"]["delta"],
             "gamma": call["option_greeks"]["gamma"] + put["option_greeks"]["gamma"],
-            "pop": ((call["option_greeks"]["pop"] + put["option_greeks"]["pop"]) / 2) * 100
+            "pop": (call["option_greeks"]["pop"] + put["option_greeks"]["pop"]) / 2 * 100
         }
     except Exception as e:
         st.warning(f"Exception in extract_seller_metrics: {e}")
@@ -145,9 +144,9 @@ def full_chain_table(option_chain, spot_price):
         chain_data = []
         for opt in option_chain:
             strike = opt["strike_price"]
+            call = opt["call_options"]
+            put = opt["put_options"]
             if abs(strike - spot_price) <= 300:
-                call = opt["call_options"]
-                put = opt["put_options"]
                 chain_data.append({
                     "Strike": strike,
                     "Call IV": call["option_greeks"]["iv"],
@@ -170,15 +169,15 @@ def market_metrics(option_chain, expiry_date):
         call_oi = sum(opt["call_options"]["market_data"]["oi"] for opt in option_chain if "call_options" in opt and "market_data" in opt["call_options"])
         put_oi = sum(opt["put_options"]["market_data"]["oi"] for opt in option_chain if "put_options" in opt and "market_data" in opt["put_options"])
         pcr = put_oi / call_oi if call_oi != 0 else 0
-        strikes = sorted(set(opt["strike_price"] for opt in option_chain))
+        strikes = sorted(list(set([opt["strike_price"] for opt in option_chain])))
         max_pain_strike = 0
         min_pain = float('inf')
         for strike in strikes:
             pain_at_strike = 0
             for opt in option_chain:
-                if "call_options" in opt:
+                if "call_options" in opt and "market_data" in opt["call_options"]:
                     pain_at_strike += max(0, strike - opt["strike_price"]) * opt["call_options"]["market_data"]["oi"]
-                if "put_options" in opt:
+                if "put_options" in opt and "market_data" in opt["put_options"]:
                     pain_at_strike += max(0, opt["strike_price"] - strike) * opt["put_options"]["market_data"]["oi"]
             if pain_at_strike < min_pain:
                 min_pain = pain_at_strike
@@ -196,7 +195,8 @@ def calculate_volatility(config, seller_avg_iv):
         df['Date'] = pd.to_datetime(df['Date'], format="%d-%b-%Y")
         df = df.sort_values('Date')
         df['Close'] = pd.to_numeric(df['Close'], errors='coerce')
-        df['Log_Returns'] = np.log(df['Close'] / df['Close'].shift(1)).dropna()
+        df['Log_Returns'] = np.log(df['Close'] / df['Close'].shift(1))
+        df.dropna(inplace=True)
         hv_7 = np.std(df["Log_Returns"][-7:]) * np.sqrt(252) * 100
         model = arch_model(df["Log_Returns"], vol="Garch", p=1, q=1)
         res = model.fit(disp="off")
@@ -213,31 +213,43 @@ def calculate_iv_skew_slope(full_chain_df):
         if full_chain_df.empty:
             return 0
         slope, _, _, _, _ = linregress(full_chain_df["Strike"], full_chain_df["IV Skew"])
-        return round(slope, 4)
+        return slope
     except Exception as e:
         st.warning(f"Exception in calculate_iv_skew_slope: {e}")
         return 0
 
 def calculate_regime(atm_iv, ivp, realized_vol, garch_vol, straddle_price, spot_price, pcr, vix, iv_skew_slope):
-    expected_move = (straddle_price / spot_price) * 100
-    vol_spread = atm_iv - realized_vol
-    regime_score = 0
-    regime_score += 10 if ivp > 80 else -10 if ivp < 20 else 0
-    regime_score += 10 if vol_spread > 10 else -10 if vol_spread < -10 else 0
-    regime_score += 10 if vix > 20 else -10 if vix < 10 else 0
-    regime_score += 5 if pcr > 1.2 else -5 if pcr < 0.8 else 0
-    regime_score += 5 if abs(iv_skew_slope) > 0.001 else 0
-    regime_score += 10 if expected_move > 0.05 else -10 if expected_move < 0.02 else 0
-    regime_score += 5 if garch_vol > realized_vol * 1.2 else -5 if garch_vol < realized_vol * 0.8 else 0
-
-    if regime_score > 20:
-        return regime_score, "ðŸ”¥ High Vol Trend", "Market in high volatility â€” ideal for premium selling.", "High IVP, elevated VIX, and wide straddle suggest strong premium opportunities."
-    elif regime_score > 10:
-        return regime_score, "âš¡ Elevated Volatility", "Above-average volatility â€” favor range-bound strategies.", "Moderate IVP and IV-RV spread indicate potential for mean-reverting moves."
-    elif regime_score > -10:
-        return regime_score, "ðŸ™‚ Neutral Volatility", "Balanced market â€” flexible strategy selection.", "IV and RV aligned, with moderate PCR and skew."
-    else:
-        return regime_score, "ðŸ“‰ Low Volatility", "Low volatility â€” cautious selling or long vega plays.", "Low IVP, tight straddle, and low VIX suggest limited movement."
+    try:
+        expected_move = (straddle_price / spot_price) * 100
+        vol_spread = atm_iv - realized_vol
+        regime_score = 0
+        regime_score += 10 if ivp > 80 else -10 if ivp < 20 else 0
+        regime_score += 10 if vol_spread > 10 else -10 if vol_spread < -10 else 0
+        regime_score += 10 if vix > 20 else -10 if vix < 10 else 0
+        regime_score += 5 if pcr > 1.2 else -5 if pcr < 0.8 else 0
+        regime_score += 5 if abs(iv_skew_slope) > 0.001 else 0
+        regime_score += 10 if expected_move > 0.05 else -10 if expected_move < 0.02 else 0
+        regime_score += 5 if garch_vol > realized_vol * 1.2 else -5 if garch_vol < realized_vol * 0.8 else 0
+        if regime_score > 20:
+            regime = "ðŸ”¥ High Vol Trend"
+            note = "Market in high volatility â€” ideal for premium selling with defined risk."
+            explanation = "High IVP, elevated VIX, and wide straddle suggest strong premium opportunities."
+        elif regime_score > 10:
+            regime = "ðŸš§ Elevated Volatility"
+            note = "Above-average volatility â€” favor range-bound strategies."
+            explanation = "Moderate IVP and IV-RV spread indicate potential for mean-reverting moves."
+        elif regime_score > -10:
+            regime = "ðŸ˜´ Neutral Volatility"
+            note = "Balanced market â€” flexible strategy selection."
+            explanation = "IV and RV aligned, with moderate PCR and skew."
+        else:
+            regime = "ðŸ’¤ Low Volatility"
+            note = "Low volatility â€” cautious selling or long vega plays."
+            explanation = "Low IVP, tight straddle, and low VIX suggest limited movement."
+        return regime_score, regime, note, explanation
+    except Exception as e:
+        st.warning(f"Exception in calculate_regime: {e}")
+        return 0, "Unknown", "Error calculating regime.", ""
 
 def suggest_strategy(regime_label, ivp, iv_minus_rv, days_to_expiry, event_df, expiry_date, straddle_price, spot_price):
     strategies = []
@@ -250,7 +262,7 @@ def suggest_strategy(regime_label, ivp, iv_minus_rv, days_to_expiry, event_df, e
         try:
             dt = pd.to_datetime(row["Datetime"])
             level = row["Classification"]
-            if level == "High" and (0 <= (datetime.strptime(expiry_date, "%Y-%m-%d") - dt).days <= event_window):
+            if (level == "High") and (0 <= (datetime.strptime(expiry_date, "%Y-%m-%d") - dt).days <= event_window):
                 high_impact_event_near = True
             if level == "High" and pd.notnull(row["Forecast"]) and pd.notnull(row["Prior"]):
                 forecast = float(str(row["Forecast"]).strip("%")) if "%" in str(row["Forecast"]) else float(row["Forecast"])
@@ -261,24 +273,28 @@ def suggest_strategy(regime_label, ivp, iv_minus_rv, days_to_expiry, event_df, e
             st.warning(f"Error processing event row: {row}. Error: {e}")
             continue
     if high_impact_event_near:
-        event_warning = f"âš  High-impact event within {event_window} days of expiry. Prefer defined-risk strategies."
+        event_warning = f"âš ï¸ High-impact event within {event_window} days of expiry. Prefer defined-risk strategies."
     if event_impact_score > 0:
         rationale.append(f"High-impact events with significant forecast deviations ({event_impact_score} events).")
     expected_move_pct = (straddle_price / spot_price) * 100
     if regime_label == "ðŸ”¥ High Vol Trend":
-        strategies = ["Iron Fly", "Wide Strangle"]
-        rationale.append("Strong IV premium â€” neutral strategies for premium capture.")
-    elif regime_label == "âš¡ Elevated Volatility":
+        if high_impact_event_near or event_impact_score > 0:
+            strategies = ["Iron Fly", "Wide Strangle"]
+            rationale.append("High volatility with major event â€” use defined-risk structures.")
+        else:
+            strategies = ["Iron Fly", "Wide Strangle"]
+            rationale.append("Strong IV premium â€” neutral strategies for premium capture.")
+    elif regime_label == "ðŸš§ Elevated Volatility":
         strategies = ["Iron Condor", "Jade Lizard"]
         rationale.append("Volatility above average â€” range-bound strategies offer favorable reward-risk.")
-    elif regime_label == "ðŸ™‚ Neutral Volatility":
+    elif regime_label == "ðŸ˜´ Neutral Volatility":
         if days_to_expiry >= 3:
             strategies = ["Jade Lizard", "Bull Put Spread"]
             rationale.append("Market balanced â€” slight directional bias strategies offer edge.")
         else:
             strategies = ["Iron Fly"]
             rationale.append("Tight expiry â€” quick theta-based capture via short Iron Fly.")
-    elif regime_label == "ðŸ“‰ Low Volatility":
+    elif regime_label == "ðŸ’¤ Low Volatility":
         if days_to_expiry > 7:
             strategies = ["Straddle", "Calendar Spread"]
             rationale.append("Low IV with longer expiry â€” benefit from potential IV increase.")
@@ -295,108 +311,267 @@ def suggest_strategy(regime_label, ivp, iv_minus_rv, days_to_expiry, event_df, e
     return strategies, " | ".join(rationale), event_warning
 
 @st.cache_data(ttl=60)
+def fetch_trade_data(config, full_chain_df):
+    try:
+        url_positions = f"{config['base_url']}/portfolio/short-term-positions"
+        res_positions = requests.get(url_positions, headers=config['headers'])
+        url_trades = f"{config['base_url']}/order/trades/get-trades-for-day"
+        res_trades = requests.get(url_trades, headers=config['headers'])
+        positions = []
+        trades = []
+        if res_positions.status_code == 200:
+            positions = res_positions.json().get("data", [])
+        else:
+            st.warning(f"Error fetching positions: {res_positions.status_code} - {res_positions.text}")
+        if res_trades.status_code == 200:
+            trades = res_trades.json().get("data", [])
+        else:
+            st.warning(f"Error fetching trades: {res_trades.status_code} - {res_trades.text}")
+        trade_counts = {}
+        for trade in trades:
+            instrument = trade.get("instrument_token", "")
+            strat = "Straddle" if "NIFTY" in instrument and ("CE" in instrument or "PE" in instrument) else "Unknown"
+            trade_counts[strat] = trade_counts.get(strat, 0) + 1
+        trades_df_list = []
+        for pos in positions:
+            instrument = pos.get("instrument_token", "")
+            strategy = "Unknown"
+            if pos.get("product") == "D":
+                if pos.get("quantity") < 0 and pos.get("average_price") > 0:
+                    if "CE" in instrument or "PE" in instrument:
+                        strategy = "Straddle"
+                    else:
+                        strategy = "Iron Condor"
+            capital = pos["quantity"] * pos["average_price"]
+            trades_df_list.append({
+                "strategy": strategy,
+                "capital_used": abs(capital),
+                "potential_loss": abs(capital * 0.1),
+                "realized_pnl": pos["pnl"],
+                "trades_today": trade_counts.get(strategy, 0),
+                "sl_hit": pos["pnl"] < -abs(capital * 0.05),
+                "vega": full_chain_df["Total Vega"].mean() if not full_chain_df.empty else 0
+            })
+        return pd.DataFrame(trades_df_list) if trades_df_list else pd.DataFrame()
+    except Exception as e:
+        st.error(f"Exception in fetch_trade_data: {e}")
+        return pd.DataFrame()
+
+@st.cache_data(ttl=60)
 def get_funds_and_margin(config):
     try:
-        url = f"{config['base_url']}/user/get-funds-and-margin?segment=SEC"
+        url = f"{config['base_url']}/user/get-funds-and-margin?segment=EQ"
         res = requests.get(url, headers=config['headers'])
         if res.status_code == 200:
             data = res.json().get("data", {})
-            equity_data = data.get("equity", {})
             return {
-                "available_margin": float(equity_data.get("available_margin", 0)),
-                "used_margin": float(equity_data.get("used_margin", 0)),
-                "total_funds": float(equity_data.get("notional_cash", 0))
+                "available_margin": data.get("available_margin", 0),
+                "used_margin": data.get("used_margin", 0),
+                "total_funds": data.get("equity", {}).get("total_funds", 0)
             }
         st.warning(f"Error fetching funds and margin: {res.status_code} - {res.text}")
         return {"available_margin": 0, "used_margin": 0, "total_funds": 0}
     except Exception as e:
-        st.error(f"Exception in get_funds_and_margin: {e}")
+        st.warning(f"Exception in get_funds_and_margin: {e}")
         return {"available_margin": 0, "used_margin": 0, "total_funds": 0}
+
+@st.cache_data(ttl=60)
+def get_option_greeks(config, instrument_keys):
+    try:
+        if not instrument_keys:
+            return {}
+        url = f"{config['base_url'].replace('v2', 'v3')}/market-quote/option-greek"
+        params = {"instrument_key": ",".join(instrument_keys)}
+        res = requests.get(url, headers=config['headers'], params=params)
+        if res.status_code == 200:
+            return res.json()["data"]
+        st.warning(f"Error fetching Greeks: {res.status_code} - {res.text}")
+        return {}
+    except Exception as e:
+        st.warning(f"Exception in get_option_greeks: {e}")
+        return {}
 
 def calculate_sharpe_ratio():
     try:
-        daily_returns = np.random.normal(0.001, 0.01, 252)
+        # Simulate 252 daily returns (1 year) for an option selling portfolio
+        np.random.seed(42)  # For reproducibility
+        daily_returns = np.random.normal(0.001, 0.01, 252)  # Mean 0.1%, Std 1%
         annual_return = np.mean(daily_returns) * 252
         annual_volatility = np.std(daily_returns) * np.sqrt(252)
-        sharpe_ratio = (annual_return - 0.06 / 252) / annual_volatility
+        risk_free_rate = 0.06 / 252  # 6% annual risk-free rate, daily
+        sharpe_ratio = (annual_return - risk_free_rate) / annual_volatility
         return round(sharpe_ratio, 2)
     except Exception as e:
         st.warning(f"Exception in calculate_sharpe_ratio: {e}")
         return 0
 
-def calculate_strategy_margin(config, strategy_details):
+def evaluate_full_risk(trades_df, config, regime_label, vix):
     try:
-        instruments = [{"instrument_key": order["instrument_key"], "quantity": abs(order["quantity"]), 
-                         "transaction_type": order["transaction_type"], "product": "D"} for order in strategy_details["orders"]]
-        url = f"{config['base_url']}/charges/margin"
-        res = requests.post(url, headers=config['headers'], json={"instruments": instruments})
-        if res.status_code == 200:
-            total_margin = sum(item.get("total_margin", 0) for item in res.json().get("data", []))
-            return total_margin
-        else:
-            st.warning(f"Failed to calculate margin: {res.status_code} - {res.text}")
-            return 0
+        daily_risk_limit = config['daily_risk_limit_pct'] * config['total_capital']
+        weekly_risk_limit = config['weekly_risk_limit_pct'] * config['total_capital']
+        max_drawdown_pct = 0.05 if vix > 20 else 0.03 if vix > 12 else 0.02
+        max_drawdown = max_drawdown_pct * config['total_capital']
+        strategy_summary = []
+        total_cap_used = 0
+        total_risk_used = 0
+        total_realized_pnl = 0
+        total_vega = 0
+        total_theta = 0
+        flags = []
+        for _, row in trades_df.iterrows():
+            strat = row["strategy"]
+            capital_used = row["capital_used"]
+            potential_risk = row["potential_loss"]
+            pnl = row["realized_pnl"]
+            sl_hit = row["sl_hit"]
+            trades_today = row["trades_today"]
+            vega = row["vega"]
+            cfg = config['risk_config'].get(strat, {"capital_pct": 0.1, "risk_per_trade_pct": 0.01})
+            risk_factor = 1.2 if regime_label == "ðŸ”¥ High Vol Trend" else 0.8 if regime_label == "ðŸ’¤ Low Volatility" else 1.0
+            max_cap = cfg["capital_pct"] * config['total_capital']
+            max_risk = cfg["risk_per_trade_pct"] * max_cap * risk_factor
+            risk_ok = potential_risk <= max_risk
+            strategy_summary.append({
+                "Strategy": strat,
+                "Capital Used": capital_used,
+                "Cap Limit": round(max_cap),
+                "% Used": round(capital_used / max_cap * 100, 2) if max_cap else 0,
+                "Potential Risk": potential_risk,
+                "Risk Limit": round(max_risk),
+                "P&L": pnl,
+                "Vega": vega,
+                "Risk OK?": "âœ…" if risk_ok else "âŒ"
+            })
+            total_cap_used += capital_used
+            total_risk_used += potential_risk
+            total_realized_pnl += pnl
+            total_vega += vega
+            if not risk_ok:
+                flags.append(f"âŒ {strat} exceeded risk limit")
+            if sl_hit and trades_today > 3:
+                flags.append(f"âš ï¸ {strat} shows possible revenge trading (SL hit + {trades_today} trades)")
+        net_dd = -total_realized_pnl if total_realized_pnl < 0 else 0
+        exposure_pct = round(total_cap_used / config['total_capital'] * 100, 2) if config['total_capital'] else 0
+        risk_pct = round(total_risk_used / config['total_capital'] * 100, 2) if config['total_capital'] else 0
+        dd_pct = round(net_dd / config['total_capital'] * 100, 2) if config['total_capital'] else 0
+        portfolio_summary = {
+            "Total Capital": config['total_capital'],
+            "Capital Deployed": total_cap_used,
+            "Exposure %": exposure_pct,
+            "Risk on Table": total_risk_used,
+            "Risk %": risk_pct,
+            "Daily Risk Limit": daily_risk_limit,
+            "Weekly Risk Limit": weekly_risk_limit,
+            "Realized P&L": total_realized_pnl,
+            "Drawdown â‚¹": net_dd,
+            "Drawdown %": dd_pct,
+            "Portfolio Vega": round(total_vega, 2),
+            "Max Drawdown Allowed": max_drawdown,
+            "Flags": flags
+        }
+        return pd.DataFrame(strategy_summary), portfolio_summary
     except Exception as e:
-        st.warning(f"Error calculating strategy margin: {e}")
-        return 0
+        st.error(f"Exception in evaluate_full_risk: {e}")
+        return pd.DataFrame(), {}
 
-def place_multi_leg_orders(config, orders):
+def find_option_by_strike(option_chain, strike, option_type):
     try:
-        sorted_orders = sorted(orders, key=lambda x: 0 if x["transaction_type"] == "BUY" else 1)
-        payload = [{
-            "quantity": abs(order["quantity"]),
+        for opt in option_chain:
+            if abs(opt["strike_price"] - strike) < 0.01:
+                if option_type == "CE" and "call_options" in opt:
+                    return opt["call_options"]
+                elif option_type == "PE" and "put_options" in opt:
+                    return opt["put_options"]
+        st.warning(f"No option found for strike {strike} {option_type}")
+        return None
+    except Exception as e:
+        st.warning(f"Exception in find_option_by_strike: {e}")
+        return None
+
+def place_order(config, instrument_key, quantity, transaction_type, order_type="MARKET", price=0):
+    try:
+        url = f"{config['base_url'].replace('v2', 'v3')}/order/place"
+        payload = {
+            "quantity": quantity,
             "product": "D",
             "validity": "DAY",
-            "price": order.get("current_price", 0),
-            "tag": f"{order['instrument_key']}_leg_{idx}",
-            "slice": False,
-            "instrument_token": order["instrument_key"],
-            "order_type": "MARKET",
-            "transaction_type": order["transaction_type"],
+            "price": price,
+            "instrument_token": instrument_key,
+            "order_type": order_type,
+            "transaction_type": transaction_type,
             "disclosed_quantity": 0,
             "trigger_price": 0,
-            "is_amo": False,
-            "correlation_id": f"strat_{idx}_{datetime.now().timestamp()}"
-        } for idx, order in enumerate(sorted_orders)]
-
-        url = f"{config['base_url']}/order/multi/place"
-        res = requests.post(url, headers=config['headers'], json=payload)
-        if res.status_code == 200:
-            st.success("âœ… Multi-leg order placed successfully!")
-            return True
-        else:
-            st.error(f"âŒ Failed to place multi-leg order: {res.status_code} - {res.text}")
-            return False
-    except Exception as e:
-        st.error(f"âš  Error placing multi-leg order: {e}")
-        return False
-
-def create_gtt_order(config, instrument_token, trigger_price, transaction_type="SELL", tag="SL"):
-    try:
-        url = f"{config['base_url'].replace('v2', 'v3')}/order/gtt/place"
-        payload = {
-            "type": "SINGLE",
-            "quantity": config["lot_size"],
-            "product": "D",
-            "rules": [{
-                "strategy": "ENTRY",
-                "trigger_type": "ABOVE" if transaction_type == "SELL" else "BELOW",
-                "trigger_price": trigger_price
-            }],
-            "instrument_token": instrument_token,
-            "transaction_type": transaction_type,
-            "tag": tag
+            "is_amo": False
         }
         res = requests.post(url, headers=config['headers'], json=payload)
+        st.info(f"Order response for {instrument_key}: {res.status_code} - {res.text}")
         if res.status_code == 200:
-            st.success(f"âœ… GTT order placed for {instrument_token}")
-            return True
-        else:
-            st.warning(f"âš  GTT failed: {res.status_code} - {res.text}")
-            return False
+            data = res.json()
+            if data.get("status") == "success":
+                order_data = data.get("data", {})
+                if "order_ids" in order_data and order_data["order_ids"]:
+                    return order_data["order_ids"][0]
+                elif "order_id" in order_data:
+                    return order_data["order_id"]
+                st.error(f"Unexpected response format: {data}")
+                return None
+            st.error(f"Unexpected response status: {data}")
+            return None
+        elif res.status_code == 400:
+            data = res.json()
+            errors = data.get("errors", [])
+            for error in errors:
+                if error.get("errorCode") == "UDAPI100060":
+                    st.error(f"Order failed: Insufficient funds for {instrument_key}")
+                    return None
+                else:
+                    st.error(f"Order failed: {error.get('message', 'Unknown error')} for {instrument_key}")
+                    return None
+        st.error(f"Error placing order: {res.status_code} - {res.text}")
+        return None
     except Exception as e:
-        st.error(f"âš  Error creating GTT: {e}")
-        return False
+        st.error(f"Exception in place_order: {e}")
+        return None
+
+def exit_all_positions(config):
+    try:
+        url = f"{config['base_url']}/order/positions/exit?segment=EQ"
+        res = requests.post(url, headers=config['headers'])
+        if res.status_code == 200:
+            data = res.json()
+            if data.get("status") == "success":
+                order_ids = data.get("data", {}).get("order_ids", [])
+                st.success(f"Successfully initiated exit for {len(order_ids)} positions.")
+                return order_ids
+            st.error(f"Unexpected response status: {data}")
+            return []
+        elif res.status_code == 400:
+            errors = res.json().get("errors", [])
+            for error in errors:
+                if error.get("errorCode") in ["UDAPI1108", "UDAPI1109"]:
+                    st.warning(f"No open positions to exit or limit exceeded: {error.get('message')}")
+                else:
+                    st.error(f"Exit failed: {error.get('message')}")
+            return []
+        st.error(f"Error exiting positions: {res.status_code} - {res.text}")
+        return []
+    except Exception as e:
+        st.error(f"Exception in exit_all_positions: {e}")
+        return []
+
+def logout(config):
+    try:
+        url = f"{config['base_url']}/logout"
+        res = requests.delete(url, headers=config['headers'])
+        if res.status_code == 200:
+            st.success("Successfully logged out.")
+            st.session_state.access_token = ""
+            st.session_state.logged_in = False
+            st.cache_data.clear()
+        else:
+            st.error(f"Logout failed: {res.status_code} - {res.text}")
+    except Exception as e:
+        st.error(f"Exception in logout: {e}")
 
 # --- Strategy Definitions ---
 def get_strategy_details(strategy_name, option_chain, spot_price, config, lots=1):
@@ -472,7 +647,8 @@ def _iron_fly_calc(option_chain, spot_price, config, lots):
         {"instrument_key": ce_long_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "BUY"},
         {"instrument_key": pe_long_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "BUY"}
     ]
-    return {"strategy": "Iron Fly", "strikes": [strike, strike, strike + wing, strike - wing], "orders": orders}
+    return {"strategy": "Iron Fly", "strikes": [strike, strike, strike + wing, strike - wing],
+            "premium": 0, "max_loss": 0, "max_profit": 0, "orders": orders}
 
 def _iron_condor_calc(option_chain, spot_price, config, lots):
     atm = min(option_chain, key=lambda x: abs(x["strike_price"] - spot_price))
@@ -495,7 +671,8 @@ def _iron_condor_calc(option_chain, spot_price, config, lots):
         {"instrument_key": ce_long_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "BUY"},
         {"instrument_key": pe_long_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "BUY"}
     ]
-    return {"strategy": "Iron Condor", "strikes": [ce_short_strike, pe_short_strike, ce_long_strike, pe_long_strike], "orders": orders}
+    return {"strategy": "Iron Condor", "strikes": [ce_short_strike, pe_short_strike, ce_long_strike, pe_long_strike],
+            "premium": 0, "max_loss": 0, "max_profit": 0, "orders": orders}
 
 def _jade_lizard_calc(option_chain, spot_price, config, lots):
     atm = min(option_chain, key=lambda x: abs(x["strike_price"] - spot_price))
@@ -513,7 +690,8 @@ def _jade_lizard_calc(option_chain, spot_price, config, lots):
         {"instrument_key": pe_short_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "SELL"},
         {"instrument_key": pe_long_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "BUY"}
     ]
-    return {"strategy": "Jade Lizard", "strikes": [call_strike, put_strike, put_long_strike], "orders": orders}
+    return {"strategy": "Jade Lizard", "strikes": [call_strike, put_strike, put_long_strike],
+            "premium": 0, "max_loss": 0, "max_profit": 0, "orders": orders}
 
 def _straddle_calc(option_chain, spot_price, config, lots):
     atm = min(option_chain, key=lambda x: abs(x["strike_price"] - spot_price))
@@ -527,7 +705,8 @@ def _straddle_calc(option_chain, spot_price, config, lots):
         {"instrument_key": ce_short_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "SELL"},
         {"instrument_key": pe_short_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "SELL"}
     ]
-    return {"strategy": "Straddle", "strikes": [strike, strike], "orders": orders}
+    return {"strategy": "Straddle", "strikes": [strike, strike],
+            "premium": 0, "max_loss": float("inf"), "max_profit": 0, "orders": orders}
 
 def _calendar_spread_calc(option_chain, spot_price, config, lots):
     atm = min(option_chain, key=lambda x: abs(x["strike_price"] - spot_price))
@@ -541,7 +720,8 @@ def _calendar_spread_calc(option_chain, spot_price, config, lots):
         {"instrument_key": ce_short_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "SELL"},
         {"instrument_key": ce_long_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "BUY"}
     ]
-    return {"strategy": "Calendar Spread", "strikes": [strike, strike], "orders": orders}
+    return {"strategy": "Calendar Spread", "strikes": [strike, strike],
+            "premium": 0, "max_loss": 0, "max_profit": float("inf"), "orders": orders}
 
 def _bull_put_spread_calc(option_chain, spot_price, config, lots):
     atm = min(option_chain, key=lambda x: abs(x["strike_price"] - spot_price))
@@ -556,7 +736,8 @@ def _bull_put_spread_calc(option_chain, spot_price, config, lots):
         {"instrument_key": pe_short_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "SELL"},
         {"instrument_key": pe_long_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "BUY"}
     ]
-    return {"strategy": "Bull Put Spread", "strikes": [short_strike, long_strike], "orders": orders}
+    return {"strategy": "Bull Put Spread", "strikes": [short_strike, long_strike],
+            "premium": 0, "max_loss": 0, "max_profit": 0, "orders": orders}
 
 def _wide_strangle_calc(option_chain, spot_price, config, lots):
     atm = min(option_chain, key=lambda x: abs(x["strike_price"] - spot_price))
@@ -571,7 +752,8 @@ def _wide_strangle_calc(option_chain, spot_price, config, lots):
         {"instrument_key": ce_short_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "SELL"},
         {"instrument_key": pe_short_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "SELL"}
     ]
-    return {"strategy": "Wide Strangle", "strikes": [call_strike, put_strike], "orders": orders}
+    return {"strategy": "Wide Strangle", "strikes": [call_strike, put_strike],
+            "premium": 0, "max_loss": float("inf"), "max_profit": 0, "orders": orders}
 
 def _atm_strangle_calc(option_chain, spot_price, config, lots):
     atm = min(option_chain, key=lambda x: abs(x["strike_price"] - spot_price))
@@ -586,149 +768,127 @@ def _atm_strangle_calc(option_chain, spot_price, config, lots):
         {"instrument_key": ce_short_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "SELL"},
         {"instrument_key": pe_short_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "SELL"}
     ]
-    return {"strategy": "ATM Strangle", "strikes": [call_strike, put_strike], "orders": orders}
+    return {"strategy": "ATM Strangle", "strikes": [call_strike, put_strike],
+            "premium": 0, "max_loss": float("inf"), "max_profit": 0, "orders": orders}
 
-def find_option_by_strike(option_chain, strike, option_type):
-    try:
-        for opt in option_chain:
-            if abs(opt["strike_price"] - strike) < 0.01:
-                if option_type == "CE" and "call_options" in opt:
-                    return opt["call_options"]
-                elif option_type == "PE" and "put_options" in opt:
-                    return opt["put_options"]
-        st.warning(f"No option found for strike {strike} {option_type}")
-        return None
-    except Exception as e:
-        st.warning(f"Exception in find_option_by_strike: {e}")
-        return None
+# --- Plotting Functions ---
+def plot_payoff_diagram(strategy_details, spot_price, config):
+    if not strategy_details:
+        st.warning("No strategy details to plot for payoff diagram.")
+        return
+    fig, ax = plt.subplots(figsize=(10, 6))
+    sns.set_style("darkgrid")
+    min_strike = min(min(d["strikes"]) for d in strategy_details if d["strikes"]) - 200
+    max_strike = max(max(d["strikes"]) for d in strategy_details if d["strikes"]) + 200
+    strikes = np.linspace(min_strike, max_strike, 200)
+    for detail in strategy_details:
+        payoffs = np.zeros_like(strikes)
+        for order in detail["orders"]:
+            instrument_key = order["instrument_key"]
+            qty = order["quantity"]
+            is_buy = order["transaction_type"] == "BUY"
+            multiplier = 1 if is_buy else -1
+            try:
+                parts = instrument_key.split('|')[1].replace('Nifty 50', '')
+                strike_str = ''.join(filter(str.isdigit, parts))
+                order_strike = float(strike_str)
+            except (ValueError, IndexError):
+                order_strike = detail["strikes"][detail["orders"].index(order)]
+            is_call = "CE" in instrument_key
+            price = order.get("current_price", 0)
+            if is_call:
+                payoff = multiplier * (np.maximum(0, strikes - order_strike) - price)
+            else:
+                payoff = multiplier * (np.maximum(0, order_strike - strikes) - price)
+            payoffs += payoff * (qty / config["lot_size"])
+        ax.plot(strikes, payoffs, label=detail["strategy"], linewidth=2)
+    ax.axvline(spot_price, linestyle="--", color="yellow", label=f"Spot Price: {spot_price:.0f}")
+    ax.axhline(0, linestyle="--", color="red", label="Breakeven")
+    ax.set_title("ðŸ“Š Payoff Diagram", color="white")
+    ax.set_xlabel("Underlying Price", color="white")
+    ax.set_ylabel("Payoff (â‚¹)", color="white")
+    ax.legend()
+    ax.grid(True, linestyle=':', alpha=0.6)
+    ax.tick_params(axis='x', colors='white')
+    ax.tick_params(axis='y', colors='white')
+    ax.spines['left'].set_color('white')
+    ax.spines['bottom'].set_color('white')
+    ax.spines['right'].set_color('white')
+    ax.spines['top'].set_color('white')
+    fig.patch.set_facecolor('#0E1117')
+    ax.set_facecolor('#0E1117')
+    st.pyplot(fig)
 
-def get_option_greeks(config, instrument_keys):
-    try:
-        if not instrument_keys:
-            return {}
-        url = f"{config['base_url'].replace('v2', 'v3')}/market-quote/option-greek"
-        params = {"instrument_key": ",".join(instrument_keys)}
-        res = requests.get(url, headers=config['headers'], params=params)
-        if res.status_code == 200:
-            return res.json()["data"]
-        st.warning(f"Error fetching Greeks: {res.status_code} - {res.text}")
-        return {}
-    except Exception as e:
-        st.warning(f"Exception in get_option_greeks: {e}")
-        return {}
+def plot_vol_comparison(seller, hv_7, garch_7d):
+    labels = ['ATM IV', 'Realized Vol (7D)', 'GARCH Vol (7D)']
+    values = [seller["avg_iv"], hv_7, garch_7d]
+    colors = ['#00BFFF', '#32CD32', '#FF4500']
+    fig, ax = plt.subplots(figsize=(8, 5))
+    bars = ax.bar(labels, values, color=colors)
+    for bar in bars:
+        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.4,
+                f"{bar.get_height():.2f}%", ha='center', va='bottom', color='white')
+    ax.set_title("ðŸ“Š Volatility Comparison: IV vs RV vs GARCH", color="white")
+    ax.set_ylabel("Annualized Volatility (%)", color="white")
+    ax.grid(axis='y', linestyle='--', alpha=0.6)
+    ax.tick_params(axis='x', colors='white')
+    ax.tick_params(axis='y', colors='white')
+    ax.spines['left'].set_color('white')
+    ax.spines['bottom'].set_color('white')
+    ax.spines['right'].set_color('white')
+    ax.spines['top'].set_color('white')
+    fig.patch.set_facecolor('#0E1117')
+    ax.set_facecolor('#0E1117')
+    st.pyplot(fig)
 
-def evaluate_full_risk(trades_df, config, regime_label, vix):
-    try:
-        daily_risk_limit = config['daily_risk_limit_pct'] * config['total_funds']
-        weekly_risk_limit = config['weekly_risk_limit_pct'] * config['total_funds']
-        max_drawdown_pct = 0.05 if vix > 20 else 0.03 if vix > 12 else 0.02
-        max_drawdown = max_drawdown_pct * config['total_funds']
-        strategy_summary = []
-        total_cap_used = total_risk_used = total_realized_pnl = total_vega = total_theta = 0
-        flags = []
-        for _, row in trades_df.iterrows():
-            strat = row["strategy"]
-            capital_used = row["capital_used"]
-            potential_risk = row["potential_loss"]
-            pnl = row["realized_pnl"]
-            sl_hit = row["sl_hit"]
-            vega = row["vega"]
-            cfg = config['risk_config'].get(strat, {"capital_pct": 0.1, "risk_per_trade_pct": 0.01})
-            risk_factor = 1.2 if regime_label == "ðŸ”¥ High Vol Trend" else 0.8 if regime_label == "ðŸ“‰ Low Volatility" else 1.0
-            max_cap = cfg["capital_pct"] * config['total_funds']
-            max_risk = cfg["risk_per_trade_pct"] * max_cap * risk_factor
-            risk_ok = potential_risk <= max_risk
-            strategy_summary.append({
-                "Strategy": strat,
-                "Capital Used": capital_used,
-                "Cap Limit": round(max_cap),
-                "% Used": round(capital_used / max_cap * 100, 2),
-                "Potential Risk": potential_risk,
-                "Risk Limit": round(max_risk),
-                "P&L": pnl,
-                "Vega": vega,
-                "Risk OK?": "âœ…" if risk_ok else "âŒ"
-            })
-            total_cap_used += capital_used
-            total_risk_used += potential_risk
-            total_realized_pnl += pnl
-            total_vega += vega
-            if not risk_ok:
-                flags.append(f"âŒ {strat} exceeded risk limit")
-            if sl_hit:
-                flags.append(f"âš  {strat} shows possible revenge trading")
-        net_dd = -total_realized_pnl if total_realized_pnl < 0 else 0
-        exposure_pct = round(total_cap_used / config['total_funds'] * 100, 2)
-        risk_pct = round(total_risk_used / config['total_funds'] * 100, 2)
-        dd_pct = round(net_dd / config['total_funds'] * 100, 2)
-        portfolio_summary = {
-            "Total Funds": config['total_funds'],
-            "Capital Deployed": total_cap_used,
-            "Exposure %": exposure_pct,
-            "Risk on Table": total_risk_used,
-            "Risk %": risk_pct,
-            "Daily Risk Limit": daily_risk_limit,
-            "Weekly Risk Limit": weekly_risk_limit,
-            "Realized P&L": total_realized_pnl,
-            "Drawdown â‚¹": net_dd,
-            "Drawdown %": dd_pct,
-            "Max Drawdown Allowed": max_drawdown,
-            "Flags": flags
-        }
-        return pd.DataFrame(strategy_summary), portfolio_summary
-    except Exception as e:
-        st.error(f"Exception in evaluate_full_risk: {e}")
-        return pd.DataFrame(), {}
-
-def fetch_trade_data(config, full_chain_df):
-    try:
-        url_positions = f"{config['base_url']}/portfolio/short-term-positions"
-        res_positions = requests.get(url_positions, headers=config['headers'])
-        url_trades = f"{config['base_url']}/order/trades/get-trades-for-day"
-        res_trades = requests.get(url_trades, headers=config['headers'])
-        positions = []
-        trades = []
-        if res_positions.status_code == 200:
-            positions = res_positions.json().get("data", [])
-        else:
-            st.warning(f"Error fetching positions: {res_positions.status_code} - {res_positions.text}")
-        if res_trades.status_code == 200:
-            trades = res_trades.json().get("data", [])
-        else:
-            st.warning(f"Error fetching trades: {res_trades.status_code} - {res_trades.text}")
-        trade_counts = {}
-        for trade in trades:
-            instrument = trade.get("instrument_token", "")
-            strat = "Straddle" if "NIFTY" in instrument and ("CE" in instrument or "PE" in instrument) else "Unknown"
-            trade_counts[strat] = trade_counts.get(strat, 0) + 1
-        trades_df_list = []
-        for pos in positions:
-            instrument = pos.get("instrument_token", "")
-            strategy = "Unknown"
-            if pos.get("product") == "D":
-                if pos.get("quantity") < 0 and pos.get("average_price") > 0:
-                    if "CE" in instrument or "PE" in instrument:
-                        strategy = "Straddle"
-                    else:
-                        strategy = "Iron Condor"
-            capital = pos["quantity"] * pos["average_price"]
-            trades_df_list.append({
-                "strategy": strategy,
-                "capital_used": abs(capital),
-                "potential_loss": abs(capital * 0.1),
-                "realized_pnl": pos["pnl"],
-                "trades_today": trade_counts.get(strategy, 0),
-                "sl_hit": pos["pnl"] < -abs(capital * 0.05),
-                "vega": full_chain_df["Total Vega"].mean() if not full_chain_df.empty else 0
-            })
-        return pd.DataFrame(trades_df_list) if trades_df_list else pd.DataFrame()
-    except Exception as e:
-        st.error(f"Exception in fetch_trade_data: {e}")
-        return pd.DataFrame()
+def plot_chain_analysis(full_chain_df):
+    if full_chain_df.empty:
+        st.warning("No option chain data to plot.")
+        return
+    sns.set_style("darkgrid")
+    fig, axes = plt.subplots(2, 2, figsize=(16, 10))
+    line_color_1 = "#8A2BE2"
+    line_color_2 = "#3CB371"
+    line_color_3 = "#FFD700"
+    bar_palette = "viridis"
+    sns.lineplot(data=full_chain_df, x="Strike", y="IV Skew", ax=axes[0, 0], marker="o", color=line_color_1)
+    axes[0, 0].set_title("IV Skew", color="white")
+    axes[0, 0].axhline(0, linestyle='--', color="gray")
+    axes[0, 0].tick_params(axis='x', colors='white', rotation=45)
+    axes[0, 0].tick_params(axis='y', colors='white')
+    axes[0, 0].set_xlabel("Strike", color="white")
+    axes[0, 0].set_ylabel("IV Skew", color="white")
+    sns.lineplot(data=full_chain_df, x="Strike", y="Total Theta", ax=axes[0, 1], marker="o", color=line_color_2)
+    axes[0, 1].set_title("Total Theta", color="white")
+    axes[0, 1].tick_params(axis='x', colors='white', rotation=45)
+    axes[0, 1].tick_params(axis='y', colors='white')
+    axes[0, 1].set_xlabel("Strike", color="white")
+    axes[0, 1].set_ylabel("Total Theta", color="white")
+    sns.lineplot(data=full_chain_df, x="Strike", y="Straddle Price", ax=axes[1, 0], marker="o", color=line_color_3)
+    axes[1, 0].set_title("Straddle Price", color="white")
+    axes[1, 0].tick_params(axis='x', colors='white', rotation=45)
+    axes[1, 0].tick_params(axis='y', colors='white')
+    axes[1, 0].set_xlabel("Strike", color="white")
+    axes[1, 0].set_ylabel("Straddle Price", color="white")
+    sns.barplot(data=full_chain_df, x="Strike", y="Total OI", ax=axes[1, 1], palette=bar_palette)
+    axes[1, 1].set_title("Total OI", color="white")
+    axes[1, 1].tick_params(axis='x', colors='white', rotation=45)
+    axes[1, 1].tick_params(axis='y', colors='white')
+    axes[1, 1].set_xlabel("Strike", color="white")
+    axes[1, 1].set_ylabel("Total OI", color="white")
+    fig.patch.set_facecolor('#0E1117')
+    for ax in axes.flatten():
+        ax.set_facecolor('#0E1117')
+        ax.spines['left'].set_color('white')
+        ax.spines['bottom'].set_color('white')
+        ax.spines['right'].set_color('white')
+        ax.spines['top'].set_color('white')
+    plt.tight_layout()
+    st.pyplot(fig)
 
 def plot_allocation_pie(strategy_df, config):
     if strategy_df.empty:
-        st.info("No strategy data to plot allocation.")
+        st.warning("No strategy data to plot allocation.")
         return
     labels = strategy_df["Strategy"]
     sizes = strategy_df["Capital Used"]
@@ -740,18 +900,25 @@ def plot_allocation_pie(strategy_df, config):
     st.pyplot(fig)
 
 def plot_drawdown_trend(portfolio_summary):
+    # Simulate drawdown trend since no trade history
     np.random.seed(42)
     days = 30
     drawdowns = np.cumsum(np.random.normal(-1000, 5000, days))
     drawdowns = np.maximum(drawdowns, -portfolio_summary["Max Drawdown Allowed"])
     fig, ax = plt.subplots(figsize=(10, 6))
-    ax.plot(range(days), drawdowns, color="#00BFFF")
+    ax.plot(range(days), drawdowns, color="#00BFFF", label="Drawdown Trend")
     ax.axhline(-portfolio_summary["Max Drawdown Allowed"], linestyle="--", color="red", label="Max Drawdown Allowed")
     ax.set_title("Drawdown Trend (â‚¹)", color="white")
+    ax.set_xlabel("Days", color="white")
+    ax.set_ylabel("Drawdown (â‚¹)", color="white")
     ax.legend()
     ax.grid(True, linestyle=':', alpha=0.6)
     ax.tick_params(axis='x', colors='white')
     ax.tick_params(axis='y', colors='white')
+    ax.spines['left'].set_color('white')
+    ax.spines['bottom'].set_color('white')
+    ax.spines['right'].set_color('white')
+    ax.spines['top'].set_color('white')
     fig.patch.set_facecolor('#0E1117')
     ax.set_facecolor('#0E1117')
     st.pyplot(fig)
@@ -766,63 +933,103 @@ def plot_margin_gauge(funds_data):
     ax.tick_params(axis='y', colors='white')
     ax.spines['left'].set_color('white')
     ax.spines['bottom'].set_color('white')
+    ax.spines['right'].set_color('white')
+    ax.spines['top'].set_color('white')
     fig.patch.set_facecolor('#0E1117')
     ax.set_facecolor('#0E1117')
     st.pyplot(fig)
 
-def exit_all_positions(config):
-    try:
-        url = f"{config['base_url']}/order/positions/exit?segment=EQ"
-        res = requests.post(url, headers=config['headers'])
-        if res.status_code == 200:
-            data = res.json()
-            if data.get("status") == "success":
-                order_ids = data.get("data", {}).get("order_ids", [])
-                st.success(f"Successfully initiated exit for {len(order_ids)} positions.")
-                return order_ids
-            st.error(f"Unexpected response status: {data}")
-            return []
-        elif res.status_code == 400:
-            errors = res.json().get("errors", [])
-            for error in errors:
-                if error.get("errorCode") == "UDAPI1108":
-                    st.warning("No open positions to exit.")
-                    return []
-            st.error("Exit failed due to unknown reason.")
-            return []
-        st.error(f"Error exiting positions: {res.status_code} - {res.text}")
-        return []
-    except Exception as e:
-        st.error(f"Exception in exit_all_positions: {e}")
-        return []
+# --- Streamlit UI ---
+st.set_page_config(
+    page_title="Volguard - Your Trading Copilot",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-def logout(config):
-    try:
-        url = f"{config['base_url']}/logout"
-        res = requests.delete(url, headers=config['headers'])
-        if res.status_code == 200:
-            st.success("Logged out successfully.")
-            st.session_state.access_token = ""
-            st.session_state.logged_in = False
-            st.cache_data.clear()
-        else:
-            st.error(f"Logout failed: {res.status_code} - {res.text}")
-    except Exception as e:
-        st.error(f"Exception in logout: {e}")
-
-# --- Streamlit UI Setup ---
-st.set_page_config(page_title="Volguard - Your Trading Copilot", layout="wide", initial_sidebar_state="expanded")
 st.markdown(
     """
     <style>
-    .main { background-color: #0E1117; color: white; }
-    .metric-box { background-color: #1A1C24; border-radius: 8px; padding: 15px; margin-bottom: 10px; color: white; }
-    .metric-box h3 { color: #6495ED; font-size: 1em; margin-bottom: 5px; }
-    .metric-box .value { font-size: 1.8em; font-weight: bold; color: #00BFFF; }
+    .main {
+        background-color: #0E1117;
+        color: white;
+    }
+    .stApp {
+        background-color: #0E1117;
+    }
+    .stTextInput>div>div>input {
+        background-color: #262730;
+        color: white;
+    }
+    .stButton>button {
+        background-color: #1E90FF;
+        color: white;
+        border-radius: 5px;
+    }
+    .stAlert {
+        background-color: #333333;
+        color: white;
+    }
+    h1, h2, h3, h4, h5, h6 {
+        color: #1E90FF;
+    }
+    .metric-box {
+        background-color: #1A1C24;
+        border-radius: 8px;
+        padding: 15px;
+        margin-bottom: 10px;
+        box-shadow: 0 4px 8px 0 rgba(0, 0, 0, 0.2);
+        color: white;
+    }
+    .metric-box h3 {
+        color: #6495ED;
+        margin-bottom: 5px;
+    }
+    .metric-box .value {
+        font-size: 1.8em;
+        font-weight: bold;
+        color: #00BFFF;
+    }
+    .small-metric-box {
+        background-color: #1A1C24;
+        border-radius: 8px;
+        padding: 10px;
+        margin-bottom: 5px;
+        box-shadow: 0 2px 4px 0 rgba(0, 0, 0, 0.1);
+        color: white;
+        font-size: 0.9em;
+    }
+    .small-metric-box h4 {
+        color: #6495ED;
+        margin-bottom: 3px;
+        font-size: 1em;
+    }
+    .stTabs [data-baseweb="tab-list"] button [data-testid="stMarkdownContainer"] p {
+        font-size:1.2rem;
+    }
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 20px;
+    }
+    .stTabs [data-baseweb="tab-list"] button {
+        background-color: #262730;
+        color: white;
+        border-radius: 5px 5px 0 0;
+       2160    padding: 10px 15px;
+    }
+    .stTabs [data-baseweb="tab-list"] button:hover {
+        background-color: #3A3B40;
+    }
+    .stTabs [data-baseweb="tab-list"] button[aria-selected="true"] {
+        background-color: #1E90FF;
+        color: white;
+    }
     </style>
-    """, unsafe_allow_html=True
+    """,
+    unsafe_allow_html=True
 )
 
+st.sidebar.title("Volguard - Your Trading Copilot")
+
+# Initialize session state
 if 'access_token' not in st.session_state:
     st.session_state.access_token = ""
 if 'logged_in' not in st.session_state:
@@ -831,6 +1038,7 @@ if 'logged_in' not in st.session_state:
 access_token = st.sidebar.text_input("Enter Upstox Access Token", type="password", value=st.session_state.access_token)
 if st.sidebar.button("Login"):
     if access_token:
+        # Validate token by making a test API call
         config = get_config(access_token)
         test_url = f"{config['base_url']}/user/profile"
         try:
@@ -851,35 +1059,59 @@ if st.session_state.logged_in and st.sidebar.button("Logout"):
     logout(config)
     st.experimental_rerun()
 
+if st.sidebar.button("Refresh Data"):
+    st.cache_data.clear()
+    st.sidebar.success("Cache cleared. Reloading data...")
+
 if st.session_state.logged_in and access_token:
     config = get_config(access_token)
-    config['total_funds'] = get_funds_and_margin(config)['total_funds']
+    st.sidebar.success("Access Token provided. Fetching data...")
 
     @st.cache_data(show_spinner="Analyzing market data...")
     def load_all_data(config):
         option_chain = fetch_option_chain(config)
         if not option_chain:
             st.error("Failed to fetch option chain data.")
-            return None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None
+            return None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None
         spot_price = option_chain[0]["underlying_spot_price"]
         vix, nifty = get_indices_quotes(config)
-        if not vix or not nifty:
+        if vix is None or nifty is None:
             st.error("Failed to fetch India VIX or Nifty 50 data.")
-            return None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None
+            return None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None
         seller = extract_seller_metrics(option_chain, spot_price)
         if not seller:
             st.error("Failed to extract seller metrics.")
-            return None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None
+            return None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None
         full_chain_df = full_chain_table(option_chain, spot_price)
+        if full_chain_df.empty:
+            st.error("Failed to create full option chain table.")
+            return None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None, None
         market = market_metrics(option_chain, config['expiry_date'])
         ivp = load_ivp(config, seller["avg_iv"])
         hv_7, garch_7d, iv_rv_spread = calculate_volatility(config, seller["avg_iv"])
         iv_skew_slope = calculate_iv_skew_slope(full_chain_df)
         regime_score, regime, regime_note, regime_explanation = calculate_regime(
-            seller["avg_iv"], ivp, hv_7, garch_7d, seller["straddle_price"], spot_price, market["pcr"], vix, iv_skew_slope)
+            atm_iv=seller["avg_iv"],
+            ivp=ivp,
+            realized_vol=hv_7,
+            garch_vol=garch_7d,
+            straddle_price=seller["straddle_price"],
+            spot_price=spot_price,
+            pcr=market["pcr"],
+            vix=vix,
+            iv_skew_slope=iv_skew_slope
+        )
         event_df = load_upcoming_events(config)
         strategies, strategy_rationale, event_warning = suggest_strategy(
-            regime, ivp, iv_rv_spread, market['days_to_expiry'], event_df, config['expiry_date'], seller["straddle_price"], spot_price)
+            regime_label=regime,
+            ivp=ivp,
+            iv_minus_rv=iv_rv_spread,
+            days_to_expiry=market['days_to_expiry'],
+            event_df=event_df,
+            expiry_date=config['expiry_date'],
+            straddle_price=seller["straddle_price"],
+            spot_price=spot_price
+        )
         strategy_details = [get_strategy_details(strat, option_chain, spot_price, config, lots=1) for strat in strategies if get_strategy_details(strat, option_chain, spot_price, config, lots=1)]
         trades_df = fetch_trade_data(config, full_chain_df)
         strategy_df, portfolio_summary = evaluate_full_risk(trades_df, config, regime, vix)
@@ -889,73 +1121,90 @@ if st.session_state.logged_in and access_token:
                 ivp, hv_7, garch_7d, iv_rv_spread, iv_skew_slope, regime_score, regime,
                 regime_note, regime_explanation, event_df, strategies, strategy_rationale,
                 event_warning, strategy_details, trades_df, strategy_df, portfolio_summary, funds_data, sharpe_ratio)
-    
+
     (option_chain, spot_price, vix, nifty, seller, full_chain_df, market,
      ivp, hv_7, garch_7d, iv_rv_spread, iv_skew_slope, regime_score, regime,
      regime_note, regime_explanation, event_df, strategies, strategy_rationale,
      event_warning, strategy_details, trades_df, strategy_df, portfolio_summary, funds_data, sharpe_ratio) = load_all_data(config)
-    
+
     if option_chain is None:
         st.stop()
-    
-    st.markdown("<h1 style='text-align: center;'>Market Insights Dashboard</h1>", unsafe_allow_html=True)
+
+    st.markdown("---")
+    st.markdown("<h1 style='text-align: center; color: #1E90FF;'>Market Insights Dashboard</h1>", unsafe_allow_html=True)
+    st.markdown("---")
+
+    st.subheader("Current Market Snapshot")
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.markdown(f"<div class='metric-box'><h3>Nifty 50 Spot</h3><div class='value'>â‚¹{nifty:.2f}</div></div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='metric-box'><h3>ðŸ“ˆ Nifty 50 Spot</h3><div class='value'>{nifty:.2f}</div></div>", unsafe_allow_html=True)
     with col2:
-        st.markdown(f"<div class='metric-box'><h3>India VIX</h3><div class='value'>{vix:.2f}</div></div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='metric-box'><h3>ðŸŒ¡ï¸ India VIX</h3><div class='value'>{vix:.2f}</div></div>", unsafe_allow_html=True)
     with col3:
-        st.markdown(f"<div class='metric-box'><h3>ATM Strike</h3><div class='value'>{seller['strike']:.0f}</div></div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='metric-box'><h3>ðŸŽ¯ ATM Strike</h3><div class='value'>{seller['strike']:.0f}</div></div>", unsafe_allow_html=True)
     with col4:
-        st.markdown(f"<div class='metric-box'><h3>Straddle Price</h3><div class='value'>â‚¹{seller['straddle_price']:.2f}</div></div>", unsafe_allow_html=True)
-    
+        st.markdown(f"<div class='metric-box'><h3>ðŸ’° Straddle Price</h3><div class='value'>â‚¹{seller['straddle_price']:.2f}</div></div>", unsafe_allow_html=True)
+
     col5, col6, col7, col8 = st.columns(4)
     with col5:
-        st.markdown(f"<div class='metric-box'><h3>ATM IV</h3><div class='value'>{seller['avg_iv']:.2f}%</div></div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='metric-box'><h3>ðŸ“‰ ATM IV</h3><div class='value'>{seller['avg_iv']:.2f}%</div></div>", unsafe_allow_html=True)
     with col6:
-        st.markdown(f"<div class='metric-box'><h3>IVP</h3><div class='value'>{ivp}%</div></div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='metric-box'><h3>ðŸ“Š IVP</h3><div class='value'>{ivp}%</div></div>", unsafe_allow_html=True)
     with col7:
-        st.markdown(f"<div class='metric-box'><h3>Days to Expiry</h3><div class='value'>{market['days_to_expiry']}</div></div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='metric-box'><h3>â³ Days to Expiry</h3><div class='value'>{market['days_to_expiry']}</div></div>", unsafe_allow_html=True)
     with col8:
-        st.markdown(f"<div class='metric-box'><h3>PCR</h3><div class='value'>{market['pcr']:.2f}</div></div>", unsafe_allow_html=True)
-    
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["Dashboard", "Option Chain Analysis", "Strategy Suggestions", "Risk & Portfolio", "Place Orders", "Risk Management Dashboard"])
-    
+        st.markdown(f"<div class='metric-box'><h3>ðŸ” PCR</h3><div class='value'>{market['pcr']:.2f}</div></div>", unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["ðŸ“Š Dashboard", "â›“ï¸ Option Chain Analysis", "ðŸ’¡ Strategy Suggestions", "ðŸ“ˆ Risk & Portfolio", "ðŸš€ Place Orders", "ðŸ›¡ï¸ Risk Management Dashboard"])
+
     with tab1:
-        st.subheader("Volatility Landscape")
-        plot_vol_comparison(seller, hv_7, garch_7d)
-        st.markdown(f"<div class='metric-box'><h4>IV - RV Spread:</h4> {iv_rv_spread:+.2f}%", unsafe_allow_html=True)
-        st.markdown(f"<div class='metric-box'><h4>IV Skew Slope:</h4> {iv_skew_slope:.4f}", unsafe_allow_html=True)
-        st.subheader("Breakeven & Max Pain")
-        st.markdown(f"<div class='metric-box'><h4>Breakeven Range:</h4> {seller['strike'] - seller['straddle_price']:.0f} â€“ {seller['strike'] + seller['straddle_price']:.0f}</div>", unsafe_allow_html=True)
-        st.markdown(f"<div class='metric-box'><h4>Max Pain:</h4> {market['max_pain']:.0f}</div>", unsafe_allow_html=True)
-        st.subheader("Greeks at ATM")
-        st.markdown(f"<div class='metric-box'><h4>Delta</h4>{seller['delta']:.4f}</div>", unsafe_allow_html=True)
-        st.markdown(f"<div class='metric-box'><h4>Theta</h4>â‚¹{seller['theta']:.2f}</div>", unsafe_allow_html=True)
-        st.markdown(f"<div class='metric-box'><h4>Vega</h4>â‚¹{seller['vega']:.2f}</div>", unsafe_allow_html=True)
-        st.markdown(f"<div class='metric-box'><h4>Gamma</h4>{seller['gamma']:.6f}</div>", unsafe_allow_html=True)
-        st.markdown(f"<div class='metric-box'><h4>POP</h4>{seller['pop']:.2f}%</div>", unsafe_allow_html=True)
-        st.subheader("Upcoming Events")
-        if not event_df.empty:
-            st.dataframe(event_df.style.set_properties(**{'background-color': '#1A1C24', 'color': 'white'}), use_container_width=True)
-            if event_warning:
-                st.warning(event_warning)
-        else:
-            st.info("No upcoming events before expiry.")
+        st.markdown("<h2 style='color: #1E90FF;'>Market Overview</h2>", unsafe_allow_html=True)
+        col_t1_1, col_t1_2 = st.columns([0.6, 0.4])
+        with col_t1_1:
+            st.subheader("Volatility Landscape")
+            plot_vol_comparison(seller, hv_7, garch_7d)
+            st.markdown(f"<div class='small-metric-box'><h4>ðŸ§® IV - RV Spread:</h4> {iv_rv_spread:+.2f}%</div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='small-metric-box'><h4>ðŸ“‰ IV Skew Slope:</h4> {iv_skew_slope:.4f}</div>", unsafe_allow_html=True)
+            st.subheader("Breakeven & Max Pain")
+            st.markdown(f"<div class='small-metric-box'><h4>ðŸ“Š Breakeven Range:</h4> {seller['strike'] - seller['straddle_price']:.0f} â€“ {seller['strike'] + seller['straddle_price']:.0f}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='small-metric-box'><h4>ðŸŽ¯ Max Pain:</h4> {market['max_pain']:.0f}</div>", unsafe_allow_html=True)
+        with col_t1_2:
+            st.subheader("Greeks at ATM")
+            st.markdown(f"<div class='small-metric-box'><h4>â³ Theta (Total):</h4> â‚¹{seller['theta']:.2f}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='small-metric-box'><h4>ðŸŒªï¸ Vega (IV Risk):</h4> â‚¹{seller['vega']:.2f}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='small-metric-box'><h4>ðŸ“ Delta:</h4> {seller['delta']:.4f}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='small-metric-box'><h4>âš¡ Gamma:</h4> {seller['gamma']:.6f}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='small-metric-box'><h4>ðŸŽ¯ POP (Avg):</h4> {seller['pop']:.2f}%</div>", unsafe_allow_html=True)
+            st.subheader("Upcoming Events")
+            if not event_df.empty:
+                st.dataframe(event_df.style.set_properties(**{'background-color': '#1A1C24', 'color': 'white'}), use_container_width=True)
+                if event_warning:
+                    st.warning(event_warning)
+            else:
+                st.info("No upcoming events before expiry.")
 
     with tab2:
-        st.subheader("Option Chain Analysis")
+        st.markdown("<h2 style='color: #1E90FF;'>Option Chain Analysis</h2>", unsafe_allow_html=True)
         plot_chain_analysis(full_chain_df)
         st.subheader("ATM Â±300 Chain Table")
-        st.dataframe(full_chain_df.style.set_properties(**{"background-color": "#1A1C24", "color": "white"}), use_container_width=True)
+        st.dataframe(full_chain_df.style.set_properties(**{'background-color': '#1A1C24', 'color': 'white'}), use_container_width=True)
         st.subheader("Theta/Vega Ranking")
         eff_df = full_chain_df.copy()
-        eff_df["Theta/Vega"] = eff_df["Total Theta"] / eff_df["Total Vega"]
-        eff_df = eff_df[["Strike", "Total Theta", "Total Vega", "Theta/Vega"]].sort_values("Theta/Vega", ascending=False)
-        st.dataframe(eff_df.style.format(precision=2).set_properties(**{"background-color": "#1A1C24", "color": "white"}), use_container_width=True)
+        if not eff_df.empty:
+            eff_df["Theta/Vega"] = eff_df["Total Theta"] / eff_df["Total Vega"]
+            eff_df = eff_df[["Strike", "Total Theta", "Total Vega", "Theta/Vega"]].sort_values("Theta/Vega", ascending=False)
+            st.dataframe(eff_df.style.format(precision=2).set_properties(**{'background-color': '#1A1C24', 'color': 'white'}), use_container_width=True)
+        else:
+            st.info("No data for Theta/Vega ranking.")
 
     with tab3:
-        st.markdown(f"<div class='metric-box'><h3>Regime: {regime}</h3><p style='color: #6495ED;'>Score: {regime_score:.2f}</p><p>{regime_note}</p><p><i>{regime_explanation}</i></p></div>", unsafe_allow_html=True)
+        st.markdown("<h2 style='color: #1E90FF;'>Strategy Suggestions</h2>", unsafe_allow_html=True)
+        st.markdown(
+            f"<div class='metric-box'><h3>ðŸ§  Volatility Regime: {regime}</h3><p style='color: #6495ED;'>Score: {regime_score:.2f}</p><p>{regime_note}</p><p><i>{regime_explanation}</i></p>",
+            unsafe_allow_html=True,
+        )
         st.subheader("Recommended Strategies")
         if strategies:
             st.success(f"**Suggested Strategies:** {', '.join(strategies)}")
@@ -966,152 +1215,277 @@ if st.session_state.logged_in and access_token:
                 st.markdown(f"### {strat}")
                 detail = get_strategy_details(strat, option_chain, spot_price, config, lots=1)
                 if detail:
-                    order_df = pd.DataFrame({
-                        "Instrument": [order["instrument_key"] for order in detail["orders"]],
-                        "Type": [order["transaction_type"] for order in detail["orders"]],
-                        "Quantity": [config["lot_size"] for _ in detail["orders"]],
-                        "Price": [order.get("current_price", 0) for order in detail["orders"]]
-                    })
-                    st.dataframe(order_df.style.set_properties(**{"background-color": "#1A1C24", "color": "white"}), use_container_width=True)
-                    margin = calculate_strategy_margin(config, detail)
-                    st.markdown(f"<div class='metric-box'><h4>Estimated Margin Required</h4> â‚¹{margin:.2f}</div>", unsafe_allow_html=True)
-                    lots = st.number_input(f"Lots for {strat}", min_value=1, value=1, step=1, key=f"lots_{strat}")
+                    # Display strategy details
+                    st.markdown(f"**Strategy:** {detail['strategy']}")
+                    st.markdown(f"**Strikes:** {', '.join(map(str, detail['strikes']))}")
+                    st.markdown(f"**Premium Collected:** â‚¹{detail['premium_total']:.2f}")
+                    st.markdown(
+                        f"**Max Profit:** â‚¹{detail['max_profit']:.2f}"
+                        if detail['max_profit'] != float('inf')
+                        else "**Max Profit:** Unlimited"
+                    )
+                    st.markdown(
+                        f"**Max Loss:** â‚¹{detail['max_loss']:.2f}"
+                        if detail['max_loss'] != float('inf')
+                        else "**Max Loss:** Unlimited"
+                    )
+                    # Display individual legs
+                    st.markdown("#### Individual Legs (for 1 lot):")
+                    order_df = pd.DataFrame(
+                        {
+                            "Instrument": [order["instrument_key"] for order in detail["orders"]],
+                            "Type": [order["transaction_type"] for order in detail["orders"]],
+                            "Option Type": ["CE" if "CE" in order["instrument_key"] else "PE" for order in detail["orders"]],
+                            "Strike": detail["strikes"],
+                            "Quantity (per lot)": [config["lot_size"] for _ in detail["orders"]],
+                            "LTP": [order.get("current_price", 0) for order in detail["orders"]],
+                        }
+                    )
+                    st.dataframe(
+                        order_df.style.format(precision=2).set_properties(
+                            **{"background-color": "#1A1C24", "color": "white"}
+                        ),
+                        use_container_width=True,
+                    )
+                    # Payoff diagram
+                    st.subheader("Payoff Diagram")
+                    plot_payoff_diagram([detail], spot_price, config)
+                    # Risk metrics
+                    st.subheader("Risk Metrics")
+                    col_r1, col_r2, col_r3 = st.columns(3)
+                    with col_r1:
+                        st.markdown(
+                            f"<div class='small-metric-box'><h4>ðŸ’° Premium:</h4> â‚¹{detail['premium_total']:.2f}</div>",
+                            unsafe_allow_html=True,
+                        )
+                        st.markdown(
+                            f"<div class='small-metric-box'><h4>ðŸ“‰ Max Loss:</h4> â‚¹{detail['max_loss']:.2f}</div>"
+                            if detail['max_loss'] != float('inf')
+                            else "<div class='small-metric-box'><h4>ðŸ“‰ Max Loss:</h4> Unlimited</div>",
+                            unsafe_allow_html=True,
+                        )
+                    with col_r2:
+                        st.markdown(
+                            f"<div class='small-metric-box'><h4>ðŸ“ˆ Max Profit:</h4> â‚¹{detail['max_profit']:.2f}</div>"
+                            if detail['max_profit'] != float('inf')
+                            else "<div class='small-metric-box'><h4>ðŸ“ˆ Max Profit:</h4> Unlimited</div>",
+                            unsafe_allow_html=True,
+                        )
+                        st.markdown(
+                            f"<div class='small-metric-box'><h4>ðŸŽ¯ Risk/Reward:</h4> {detail['max_loss'] / detail['max_profit']:.2f}</div>"
+                            if detail['max_profit'] > 0 and detail['max_loss'] != float('inf')
+                            else "<div class='small-metric-box'><h4>ðŸŽ¯ Risk/Reward:</h4> Undefined</div>",
+                            unsafe_allow_html=True,
+                        )
+                    with col_r3:
+                        capital_required = detail['premium_total'] * 10  # Approx margin
+                        st.markdown(
+                            f"<div class='small-metric-box'><h4>ðŸ’¸ Capital Required:</h4> â‚¹{capital_required:.2f}</div>",
+                            unsafe_allow_html=True,
+                        )
+                    # Order placement
+                    lots = st.number_input(
+                        f"Lots for {strat}", min_value=1, value=1, step=1, key=f"lots_{strat}"
+                    )
                     if st.button(f"Place {strat} Order", key=f"place_{strat}"):
-                        updated_detail = get_strategy_details(strat, option_chain, spot_price, config, lots=lots)
+                        updated_detail = get_strategy_details(strat, option_chain, spot_price, config, lots)
                         if updated_detail:
-                            success = place_multi_leg_orders(config, updated_detail["orders"])
-                            if success:
-                                st.success(f"Placed {strat} order with {lots} lots!")
-                            else:
-                                st.error(f"Failed to place {strat} order.")
+                            for order in updated_detail["orders"]:
+                                order_id = place_order(
+                                    config,
+                                    order["instrument_key"],
+                                    order["quantity"],
+                                    order["transaction_type"],
+                                )
+                                if not order_id:
+                                    st.error(f"Failed to place order for {order['instrument_key']}")
+                            st.success(f"Placed {strat} order with {lots} lots!")
                         else:
-                            st.error(f"Unable to generate order details for {strat}.")
+                            st.error(f"Failed to generate {strat} order details.")
                 else:
-                    st.error(f"Error: No details found for {strat}.")
+                    st.error(f"Unable to fetch details for {strat}.")
         else:
-            st.info("No strategies suggested for current market conditions.")
+            st.info("No strategies suggested for the current market conditions.")
 
     with tab4:
+        st.markdown("<h2 style='color: #1E90FF;'>Risk & Portfolio Analysis</h2>", unsafe_allow_html=True)
         st.subheader("Portfolio Summary")
         col_p1, col_p2, col_p3, col_p4 = st.columns(4)
         with col_p1:
-            st.markdown(f"<div class='metric-box'><h3>Available Capital</h3><div class='value'>â‚¹{funds_data['available_margin']:.2f}</div></div>", unsafe_allow_html=True)
+            st.markdown(
+                f"<div class='metric-box'><h3>ðŸ’° Total Capital</h3><div class='value'>â‚¹{portfolio_summary['Total Capital']:.2f}</div></div>",
+                unsafe_allow_html=True,
+            )
         with col_p2:
-            st.markdown(f"<div class='metric-box'><h3>Used Margin</h3><div class='value'>â‚¹{funds_data['used_margin']:.2f}</div></div>", unsafe_allow_html=True)
+            st.markdown(
+                f"<div class='metric-box'><h3>ðŸ“ˆ Capital Deployed</h3><div class='value'>â‚¹{portfolio_summary['Capital Deployed']:.2f}</div></div>",
+                unsafe_allow_html=True,
+            )
         with col_p3:
-            st.markdown(f"<div class='metric-box'><h3>Exposure %</h3><div class='value'>{portfolio_summary['Exposure %']:.2f}%</div></div>", unsafe_allow_html=True)
+            st.markdown(
+                f"<div class='metric-box'><h3>âš–ï¸ Exposure %</h3><div class='value'>{portfolio_summary['Exposure %']:.2f}%</div></div>",
+                unsafe_allow_html=True,
+            )
         with col_p4:
-            st.markdown(f"<div class='metric-box'><h3>Drawdown %</h3><div class='value'>{portfolio_summary['Drawdown %']:.2f}%</div></div>", unsafe_allow_html=True)
+            st.markdown(
+                f"<div class='metric-box'><h3>ðŸ“‰ Drawdown %</h3><div class='value'>{portfolio_summary['Drawdown %']:.2f}%</div></div>",
+                unsafe_allow_html=True,
+            )
         st.subheader("Strategy Risk Table")
         if not strategy_df.empty:
-            st.dataframe(strategy_df.style.set_properties(**{"background-color": "#1A1C24", "color": "white"}), use_container_width=True)
+            st.dataframe(
+                strategy_df.style.format(precision=2).set_properties(
+                    **{"background-color": "#1A1C24", "color": "white"}
+                ),
+                use_container_width=True,
+            )
             st.subheader("Capital Allocation")
             plot_allocation_pie(strategy_df, config)
+            st.subheader("Risk Heatmap")
+            plot_risk_heatmap(strategy_df)
+        else:
+            st.info("No active strategies to display.")
         if portfolio_summary.get("Flags"):
             st.subheader("Risk Alerts")
             for flag in portfolio_summary["Flags"]:
                 st.error(flag)
 
     with tab5:
-        st.markdown("<h2 style='color: #1E90FF;'>ðŸš€ Place Strategy Orders</h2>", unsafe_allow_html=True)
-        st.subheader("Select Strategies to Execute")
-        selected_strats = st.multiselect("Choose strategies:", strategies, default=strategies[:2])
-        execute_all = st.checkbox("âœ… Execute All Selected Strategies")
-        if execute_all and st.button("ðŸš€ Execute All"):
-            for strat in selected_strats:
-                detail = get_strategy_details(strat, option_chain, spot_price, config, lots=1)
-                if detail:
-                    margin = calculate_strategy_margin(config, detail)
-                    st.info(f"Calculating margin for {strat}: â‚¹{margin:.2f}")
-                    with st.spinner(f"Placing {strat}..."):
-                        success = place_multi_leg_orders(config, detail["orders"])
-                        if success:
-                            st.success(f"âœ… {strat} executed with margin â‚¹{margin:.2f}")
-                        else:
-                            st.error(f"âŒ {strat} execution failed")
-                else:
-                    st.warning(f"âš  Could not load details for {strat}")
-        st.markdown("---")
-        st.subheader("Manual Strategy Execution")
-        selected_strat = st.selectbox("Choose Strategy", strategies, key="manual_strategy")
-        if selected_strat:
-            lots = st.number_input("Number of Lots", min_value=1, value=1, step=1, key="manual_lots")
-            detail = get_strategy_details(selected_strat, option_chain, spot_price, config, lots)
+        st.markdown("<h2 style='color: #1E90FF;'>Place Orders</h2>", unsafe_allow_html=True)
+        st.subheader("Select Strategy to Place Order")
+        selected_strategy = st.selectbox("Choose Strategy", strategies, key="order_strategy")
+        if selected_strategy:
+            lots = st.number_input("Number of Lots", min_value=1, value=1, step=1, key="order_lots")
+            detail = get_strategy_details(selected_strategy, option_chain, spot_price, config, lots)
             if detail:
-                order_df = pd.DataFrame({
-                    "Instrument": [o["instrument_key"] for o in detail["orders"]],
-                    "Type": [o["transaction_type"] for o in detail["orders"]],
-                    "Quantity": [config["lot_size"] for _ in detail["orders"]],
-                    "LTP": [o.get("current_price", 0) for o in detail["orders"]]
-                })
-                st.dataframe(order_df.style.set_properties(**{"background-color": "#1A1C24", "color": "white"}), use_container_width=True)
-                margin = calculate_strategy_margin(config, detail)
-                st.markdown(f"<div class='metric-box'><h3>Estimated Margin</h3><div class='value'>â‚¹{margin:.2f}</div></div>", unsafe_allow_html=True)
-                if st.button(f"ðŸš€ Place {selected_strat} Order", key="manual_place"):
-                    success = place_multi_leg_orders(config, detail["orders"])
-                    if success:
-                        st.success(f"âœ… {selected_strat} placed successfully!")
-                    else:
-                        st.error(f"âŒ Failed to place {selected_strat} order.")
+                st.subheader(f"{selected_strategy} Order Details")
+                order_df = pd.DataFrame(
+                    {
+                        "Instrument": [order["instrument_key"] for order in detail["orders"]],
+                        "Type": [order["transaction_type"] for order in detail["orders"]],
+                        "Option Type": ["CE" if "CE" in order["instrument_key"] else "PE" for order in detail["orders"]],
+                        "Strike": detail["strikes"],
+                        "Quantity": [order["quantity"] for order in detail["orders"]],
+                        "LTP": [order.get("current_price", 0) for order in detail["orders"]],
+                    }
+                )
+                st.dataframe(
+                    order_df.style.format(precision=2).set_properties(
+                        **{"background-color": "#1A1C24", "color": "white"}
+                    ),
+                    use_container_width=True,
+                )
+                st.markdown(
+                    f"<div class='metric-box'><h3>ðŸ’° Total Premium:</h3><div class='value'>â‚¹{detail['premium_total']:.2f}</div></div>",
+                    unsafe_allow_html=True,
+                )
+                if st.button("Confirm and Place Order", key="confirm_order"):
+                    for order in detail["orders"]:
+                        order_id = place_order(
+                            config,
+                            order["instrument_key"],
+                            order["quantity"],
+                            order["transaction_type"],
+                        )
+                        if not order_id:
+                            st.error(f"Failed to place order for {order['instrument_key']}")
+                    st.success(f"Placed {selected_strategy} order with {lots} lots!")
             else:
-                st.error(f"âš  No details found for {selected_strat}")
+                st.error(f"Unable to fetch details for {selected_strategy}.")
 
-with tab6:
-    st.markdown("<h2 style='color: #1E90FF;'>ðŸ›¡ï¸ Risk Management Dashboard</h2>", unsafe_allow_html=True)
-    col_r1, col_r2, col_r3, col_r4 = st.columns(4)
-    with col_r1:
-        st.markdown(f"<div class='metric-box'><h3>Total Risk</h3><div class='value'>â‚¹{portfolio_summary['Risk on Table']:.2f}</div></div>", unsafe_allow_html=True)
-    with col_r2:
-        st.markdown(f"<div class='metric-box'><h3>Sharpe Ratio</h3><div class='value'>{sharpe_ratio:.2f}</div></div>", unsafe_allow_html=True)
-    with col_r3:
-        margin_pct = (funds_data["used_margin"] / funds_data["total_funds"] * 100) if funds_data["total_funds"] > 0 else 0
-        st.markdown(f"<div class='metric-box'><h3>Margin Utilization</h3><div class='value'>{margin_pct:.2f}%</div></div>", unsafe_allow_html=True)
-    with col_r4:
-        st.markdown(f"<div class='metric-box'><h3>Max Drawdown</h3><div class='value'>â‚¹{portfolio_summary['Max Drawdown Allowed']:.2f}</div></div>", unsafe_allow_html=True)
-    st.subheader("Greeks Exposure")
-    total_delta, total_theta, total_vega, total_gamma = 0.0, 0.0, 0.0, 0.0
-    for pos in trades_df.to_dict("records"):
-        try:
-            instrument_key = pos.get("instrument_token", "")
-            greeks = get_option_greeks(config, [instrument_key]).get(instrument_key, {})
-            total_delta += greeks.get("delta", 0) * pos.get("capital_used", 0)
-            total_theta += greeks.get("theta", 0) * pos.get("capital_used", 0)
-            total_vega += greeks.get("vega", 0) * pos.get("capital_used", 0)
-            total_gamma += greeks.get("gamma", 0) * pos.get("capital_used", 0)
-        except Exception as e:
-            st.warning(f"Error calculating Greeks: {e}")
-            continue
-    col_g1, col_g2, col_g3, col_g4 = st.columns(4)
-    with col_g1:
-        st.markdown(f"<div class='metric-box'><h4>Delta</h4>{total_delta:.2f}</div>", unsafe_allow_html=True)
-    with col_g2:
-        st.markdown(f"<div class='metric-box'><h4>Theta</h4>â‚¹{total_theta:.2f}</div>", unsafe_allow_html=True)
-    with col_g3:
-        st.markdown(f"<div class='metric-box'><h4>Vega</h4>â‚¹{total_vega:.2f}</div>", unsafe_allow_html=True)
-        if total_vega > 1000:
-            st.error("âš  High Vega exposure! Risk of volatility spike.")
-    with col_g4:
-        st.markdown(f"<div class='metric-box'><h4>Gamma</h4>{total_gamma:.6f}</div>", unsafe_allow_html=True)
-    st.subheader("Capital Allocation")
-    plot_allocation_pie(strategy_df, config)
-    st.subheader("Drawdown Control")
-    plot_drawdown_trend(portfolio_summary)
-    max_drawdown_limit = 0.05 if vix > 20 else 0.03 if vix > 12 else 0.02
-    if portfolio_summary["Drawdown %"] > max_drawdown_limit * 100:
-        st.error(f"âš  Drawdown ({portfolio_summary['Drawdown %']:.2f}%) exceeds limit ({max_drawdown_limit*100:.2f}%)!")
-    st.subheader("All Positions")
-    if not trades_df.empty:
-        pos_df = trades_df[["strategy", "capital_used", "realized_pnl"]]
-        pos_df.columns = ["Strategy", "Capital Used", "P&L"]
-        formatted_pos_df = pos_df.style.format({
-            "Capital Used": "{:.2f}",
-            "P&L": "{:.2f}"
-        }).set_properties(**{"background-color": "#1A1C24", "color": "white"})
-        st.dataframe(formatted_pos_df, use_container_width=True)
-    else:
-        st.info("No open positions or trade history found.")
-    st.subheader("Risk Actions")
-    if st.button("Exit All Positions", key="exit_all_pos"):
-        if st.checkbox("Confirm Exit All Positions", key="confirm_exit"):
-            exit_all_positions(config)
-    
+    with tab6:
+        st.markdown("<h2 style='color: #1E90FF;'>Risk Management Dashboard</h2>", unsafe_allow_html=True)
+        st.subheader("Portfolio Risk Overview")
+        col_r1, col_r2, col_r3, col_r4 = st.columns(4)
+        with col_r1:
+            st.markdown(
+                f"<div class='metric-box'><h3>ðŸ“‰ Total Risk</h3><div class='value'>â‚¹{portfolio_summary['Risk on Table']:.2f}</div></div>",
+                unsafe_allow_html=True,
+            )
+        with col_r2:
+            st.markdown(
+                f"<div class='metric-box'><h3>ðŸ“Š Sharpe Ratio</h3><div class='value'>{sharpe_ratio:.2f}</div></div>",
+                unsafe_allow_html=True,
+            )
+        with col_r3:
+            portfolio_beta = calculate_portfolio_beta(positions, nifty)
+            st.markdown(
+                f"<div class='metric-box'><h3>Î² Portfolio Beta</h3><div class='value'>{portfolio_beta:.2f}</div></div>",
+                unsafe_allow_html=True,
+            )
+        with col_r4:
+            margin_pct = (funds_data["used_margin"] / funds_data["total_funds"] * 100) if funds_data["total_funds"] > 0 else 0
+            st.markdown(
+                f"<div class='metric-box'><h3>ðŸ’¸ Margin Utilization</h3><div class='value'>{margin_pct:.2f}%</div></div>",
+                unsafe_allow_html=True,
+            )
+        st.subheader("Greeks Exposure")
+        total_delta, total_theta, total_vega, total_gamma = 0.0, 0.0, 0.0, 0.0
+        for pos in positions:
+            try:
+                instrument_key = pos.get("instrument_token", "")
+                greeks = get_option_greeks(config, [instrument_key]).get(instrument_key, {})
+                total_delta += greeks.get("delta", 0) * pos.get("quantity", 0)
+                total_theta += greeks.get("theta", 0) * pos.get("quantity", 0)
+                total_vega += greeks.get("vega", 0) * pos.get("quantity", 0)
+                total_gamma += greeks.get("gamma", 0) * pos.get("quantity", 0)
+            except Exception as e:
+                st.warning(f"Error calculating Greeks for {instrument_key}: {e}")
+                continue
+        col_g1, col_g2, col_g3, col_g4 = st.columns(4)
+        with col_g1:
+            st.markdown(
+                f"<div class='small-metric-box'><h4>ðŸ“ Delta</h4>{total_delta:.2f}</div>",
+                unsafe_allow_html=True,
+            )
+        with col_g2:
+            st.markdown(
+                f"<div class='small-metric-box'><h4>â³ Theta</h4>â‚¹{total_theta:.2f}</div>",
+                unsafe_allow_html=True,
+            )
+        with col_g3:
+            st.markdown(
+                f"<div class='small-metric-box'><h4>ðŸŒªï¸ Vega</h4>â‚¹{total_vega:.2f}</div>",
+                unsafe_allow_html=True,
+            )
+            if total_vega > 1000:
+                st.error("âš ï¸ High Vega exposure! Risk of volatility spike.")
+        with col_g4:
+            st.markdown(
+                f"<div class='small-metric-box'><h4>âš¡ Gamma</h4>{total_gamma:.6f}</div>",
+                unsafe_allow_html=True,
+            )
+        st.subheader("Capital Allocation")
+        plot_allocation_pie(strategy_df, config)
+        st.subheader("Drawdown Control")
+        plot_drawdown_trend(portfolio_summary)
+        max_drawdown_limit = 0.05 if vix > 20 else 0.03 if vix > 12 else 0.02
+        if portfolio_summary["Drawdown %"] > max_drawdown_limit * 100:
+            st.error(f"âš ï¸ Drawdown ({portfolio_summary['Drawdown %']:.2f}%) exceeds limit ({max_drawdown_limit*100:.2f}%)!")
+        st.subheader("All Positions")
+        if positions:
+            pos_df = pd.DataFrame(positions)
+            pos_df = pos_df[["instrument_token", "quantity", "average_price", "pnl"]]
+            pos_df.columns = ["Instrument", "Quantity", "Avg Price", "P&L"]
+            st.dataframe(
+                pos_df.style.format({
+                    "Avg Price": "{:.2f}",
+                    "P&L": "{:.2f}",
+                    "Quantity": "{:.0f}"
+                }).set_properties(
+                    **{"background-color": "#1A1C24", "color": "white"}
+                ),
+                use_container_width=True,
+            )
+        else:
+            st.info("No open positions.")
+        st.subheader("Risk Actions")
+        if st.button("Exit All Positions", key="exit_all"):
+            if st.checkbox("Confirm Exit All Positions", key="confirm_exit_all"):
+                order_ids = exit_all_positions(config)
+                if order_ids:
+                    st.success(f"Initiated exit for {len(order_ids)} positions.")
+                else:
+                    st.warning("No positions to exit or error occurred.")
+        st.subheader("Margin Utilization")
+        plot_margin_gauge(funds_data)
