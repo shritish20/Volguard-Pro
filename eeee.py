@@ -378,23 +378,33 @@ def calculate_strategy_margin(config, strategy_details):
             }
             for order in strategy_details["orders"]
         ]
+
         url = f"{config['base_url']}/charges/margin"
         res = requests.post(url, headers=config['headers'], json={"instruments": instruments})
-        
+
         if res.status_code == 200:
-            response_data = res.json().get("data", [])
-            if isinstance(response_data, list) and all(isinstance(item, dict) for item in response_data):
-                total_margin = sum(item.get("total_margin", 0) for item in response_data)
-                return total_margin
-            else:
-                st.warning(f":warning: Unexpected margin response format: {response_data}")
-                return 0
+            data = res.json().get("data", {})
+            
+            # Handle two possible formats
+            if isinstance(data, list):
+                # Case 1: List of margin items
+                total_margin = sum(item.get("total_margin", 0) for item in data)
+            elif isinstance(data, dict):
+                # Case 2: Contains margins array or direct values
+                margins = data.get("margins", [])
+                if isinstance(margins, list):
+                    total_margin = sum(item.get("total_margin", 0) for item in margins)
+                else:
+                    total_margin = data.get("required_margin", 0) or data.get("final_margin", 0)
+
+            return round(total_margin, 2)
         else:
             st.warning(f":warning: Failed to calculate margin: {res.status_code} - {res.text}")
             return 0
     except Exception as e:
         st.warning(f":warning: Error calculating strategy margin: {e}")
         return 0
+    
 
 def place_multi_leg_orders(config, orders):
     try:
