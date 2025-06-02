@@ -729,22 +729,22 @@ if st.session_state.logged_in:
         return strategies, " | ".join(rationale), event_warning
 
     def get_funds_and_margin(config):
-        try:
-            url = f"{config['base_url']}/user/get-funds-and-margin?segment=SEC"
-            res = requests.get(url, headers=config['headers'])
-            if res.status_code == 200:
-                data = res.json().get("data", {})
-                equity_data = data.get("equity", {})
-                return {
-                    "available_margin": float(equity_data.get("available_margin", 0)),
-                    "used_margin": float(equity_data.get("used_margin", 0)),
-                    "total_funds": float(equity_data.get("notional_cash", 0))
-                }
-            st.warning(f":warning: Error fetching funds and margin: {res.status_code} - {res.text}")
-            return {"available_margin": 0, "used_margin": 0, "total_funds": 0}
-        except Exception as e:
-            st.error(f":warning: Exception in get_funds_and_margin: {e}")
-            return {"available_margin": 0, "used_margin": 0, "total_funds": 0}
+    try:
+        url = f"{config['base_url']}/user/get-funds-and-margin?segment=SEC"
+        res = requests.get(url, headers=config['headers'])
+        if res.status_code == 200:
+            data = res.json().get("data", {})
+            equity_data = data.get("equity", {})
+            return {
+                "available_margin": float(equity_data.get("available_margin", 0)),
+                "used_margin": float(equity_data.get("used_margin", 0)),
+                "total_funds": float(equity_data.get("notional_cash", 0))
+            }
+        st.warning(f":warning: Error fetching funds and margin: {res.status_code} - {res.text}")
+        return {"available_margin": 0, "used_margin": 0, "total_funds": 0}
+    except Exception as e:
+        st.error(f":warning: Exception in get_funds_and_margin: {e}")
+        return {"available_margin": 0, "used_margin": 0, "total_funds": 0}
 
     def calculate_sharpe_ratio():
         try:
