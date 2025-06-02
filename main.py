@@ -106,7 +106,7 @@ def load_upcoming_events(config):
         filtered = df.loc[mask, ["Datetime", "Event", "Classification", "Forecast", "Prior"]]
         return filtered.sort_values("Datetime").reset_index(drop=True)
     except Exception as e:
-        st.warning(f"⚠ Failed to load upcoming events: {e}")
+        st.warning(f"âš  Failed to load upcoming events: {e}")
         return pd.DataFrame(columns=["Datetime", "Event", "Classification", "Forecast", "Prior"])
 
 @st.cache_data(ttl=3600)
@@ -231,13 +231,13 @@ def calculate_regime(atm_iv, ivp, realized_vol, garch_vol, straddle_price, spot_
     regime_score += 5 if garch_vol > realized_vol * 1.2 else -5 if garch_vol < realized_vol * 0.8 else 0
 
     if regime_score > 20:
-        return regime_score, "🔥 High Vol Trend", "Market in high volatility — ideal for premium selling.", "High IVP, elevated VIX, and wide straddle suggest strong premium opportunities."
+        return regime_score, "ðŸ”¥ High Vol Trend", "Market in high volatility â€” ideal for premium selling.", "High IVP, elevated VIX, and wide straddle suggest strong premium opportunities."
     elif regime_score > 10:
-        return regime_score, "⚡ Elevated Volatility", "Above-average volatility — favor range-bound strategies.", "Moderate IVP and IV-RV spread indicate potential for mean-reverting moves."
+        return regime_score, "âš¡ Elevated Volatility", "Above-average volatility â€” favor range-bound strategies.", "Moderate IVP and IV-RV spread indicate potential for mean-reverting moves."
     elif regime_score > -10:
-        return regime_score, "🙂 Neutral Volatility", "Balanced market — flexible strategy selection.", "IV and RV aligned, with moderate PCR and skew."
+        return regime_score, "ðŸ™‚ Neutral Volatility", "Balanced market â€” flexible strategy selection.", "IV and RV aligned, with moderate PCR and skew."
     else:
-        return regime_score, "📉 Low Volatility", "Low volatility — cautious selling or long vega plays.", "Low IVP, tight straddle, and low VIX suggest limited movement."
+        return regime_score, "ðŸ“‰ Low Volatility", "Low volatility â€” cautious selling or long vega plays.", "Low IVP, tight straddle, and low VIX suggest limited movement."
 
 def suggest_strategy(regime_label, ivp, iv_minus_rv, days_to_expiry, event_df, expiry_date, straddle_price, spot_price):
     strategies = []
@@ -261,37 +261,37 @@ def suggest_strategy(regime_label, ivp, iv_minus_rv, days_to_expiry, event_df, e
             st.warning(f"Error processing event row: {row}. Error: {e}")
             continue
     if high_impact_event_near:
-        event_warning = f"⚠ High-impact event within {event_window} days of expiry. Prefer defined-risk strategies."
+        event_warning = f"âš  High-impact event within {event_window} days of expiry. Prefer defined-risk strategies."
     if event_impact_score > 0:
         rationale.append(f"High-impact events with significant forecast deviations ({event_impact_score} events).")
     expected_move_pct = (straddle_price / spot_price) * 100
-    if regime_label == "🔥 High Vol Trend":
+    if regime_label == "ðŸ”¥ High Vol Trend":
         strategies = ["Iron Fly", "Wide Strangle"]
-        rationale.append("Strong IV premium — neutral strategies for premium capture.")
-    elif regime_label == "⚡ Elevated Volatility":
+        rationale.append("Strong IV premium â€” neutral strategies for premium capture.")
+    elif regime_label == "âš¡ Elevated Volatility":
         strategies = ["Iron Condor", "Jade Lizard"]
-        rationale.append("Volatility above average — range-bound strategies offer favorable reward-risk.")
-    elif regime_label == "🙂 Neutral Volatility":
+        rationale.append("Volatility above average â€” range-bound strategies offer favorable reward-risk.")
+    elif regime_label == "ðŸ™‚ Neutral Volatility":
         if days_to_expiry >= 3:
             strategies = ["Jade Lizard", "Bull Put Spread"]
-            rationale.append("Market balanced — slight directional bias strategies offer edge.")
+            rationale.append("Market balanced â€” slight directional bias strategies offer edge.")
         else:
             strategies = ["Iron Fly"]
-            rationale.append("Tight expiry — quick theta-based capture via short Iron Fly.")
-    elif regime_label == "📉 Low Volatility":
+            rationale.append("Tight expiry â€” quick theta-based capture via short Iron Fly.")
+    elif regime_label == "ðŸ“‰ Low Volatility":
         if days_to_expiry > 7:
             strategies = ["Straddle", "Calendar Spread"]
-            rationale.append("Low IV with longer expiry — benefit from potential IV increase.")
+            rationale.append("Low IV with longer expiry â€” benefit from potential IV increase.")
         else:
             strategies = ["Straddle", "ATM Strangle"]
-            rationale.append("Low IV — premium collection favorable but monitor for breakout risk.")
+            rationale.append("Low IV â€” premium collection favorable but monitor for breakout risk.")
     if event_impact_score > 0 and not high_impact_event_near:
         strategies = [s for s in strategies if "Iron" in s or "Lizard" in s or "Spread" in s]
     if ivp > 85 and iv_minus_rv > 5:
-        rationale.append(f"Volatility overpriced (IVP: {ivp}%, IV-RV: {iv_minus_rv}%) — ideal for selling premium.")
+        rationale.append(f"Volatility overpriced (IVP: {ivp}%, IV-RV: {iv_minus_rv}%) â€” ideal for selling premium.")
     elif ivp < 30:
-        rationale.append(f"Volatility underpriced (IVP: {ivp}%) — avoid unhedged selling.")
-    rationale.append(f"Expected move: ±{expected_move_pct:.2f}% based on straddle price.")
+        rationale.append(f"Volatility underpriced (IVP: {ivp}%) â€” avoid unhedged selling.")
+    rationale.append(f"Expected move: Â±{expected_move_pct:.2f}% based on straddle price.")
     return strategies, " | ".join(rationale), event_warning
 
 @st.cache_data(ttl=60)
@@ -362,13 +362,13 @@ def place_multi_leg_orders(config, orders):
         url = f"{config['base_url']}/order/multi/place"
         res = requests.post(url, headers=config['headers'], json=payload)
         if res.status_code == 200:
-            st.success("✅ Multi-leg order placed successfully!")
+            st.success("âœ… Multi-leg order placed successfully!")
             return True
         else:
-            st.error(f"❌ Failed to place multi-leg order: {res.status_code} - {res.text}")
+            st.error(f"âŒ Failed to place multi-leg order: {res.status_code} - {res.text}")
             return False
     except Exception as e:
-        st.error(f"⚠ Error placing multi-leg order: {e}")
+        st.error(f"âš  Error placing multi-leg order: {e}")
         return False
 
 def create_gtt_order(config, instrument_token, trigger_price, transaction_type="SELL", tag="SL"):
@@ -389,13 +389,13 @@ def create_gtt_order(config, instrument_token, trigger_price, transaction_type="
         }
         res = requests.post(url, headers=config['headers'], json=payload)
         if res.status_code == 200:
-            st.success(f"✅ GTT order placed for {instrument_token}")
+            st.success(f"âœ… GTT order placed for {instrument_token}")
             return True
         else:
-            st.warning(f"⚠ GTT failed: {res.status_code} - {res.text}")
+            st.warning(f"âš  GTT failed: {res.status_code} - {res.text}")
             return False
     except Exception as e:
-        st.error(f"⚠ Error creating GTT: {e}")
+        st.error(f"âš  Error creating GTT: {e}")
         return False
 
 # --- Strategy Definitions ---
@@ -634,7 +634,7 @@ def evaluate_full_risk(trades_df, config, regime_label, vix):
             sl_hit = row["sl_hit"]
             vega = row["vega"]
             cfg = config['risk_config'].get(strat, {"capital_pct": 0.1, "risk_per_trade_pct": 0.01})
-            risk_factor = 1.2 if regime_label == "🔥 High Vol Trend" else 0.8 if regime_label == "📉 Low Volatility" else 1.0
+            risk_factor = 1.2 if regime_label == "ðŸ”¥ High Vol Trend" else 0.8 if regime_label == "ðŸ“‰ Low Volatility" else 1.0
             max_cap = cfg["capital_pct"] * config['total_funds']
             max_risk = cfg["risk_per_trade_pct"] * max_cap * risk_factor
             risk_ok = potential_risk <= max_risk
@@ -647,16 +647,16 @@ def evaluate_full_risk(trades_df, config, regime_label, vix):
                 "Risk Limit": round(max_risk),
                 "P&L": pnl,
                 "Vega": vega,
-                "Risk OK?": "✅" if risk_ok else "❌"
+                "Risk OK?": "âœ…" if risk_ok else "âŒ"
             })
             total_cap_used += capital_used
             total_risk_used += potential_risk
             total_realized_pnl += pnl
             total_vega += vega
             if not risk_ok:
-                flags.append(f"❌ {strat} exceeded risk limit")
+                flags.append(f"âŒ {strat} exceeded risk limit")
             if sl_hit:
-                flags.append(f"⚠ {strat} shows possible revenge trading")
+                flags.append(f"âš  {strat} shows possible revenge trading")
         net_dd = -total_realized_pnl if total_realized_pnl < 0 else 0
         exposure_pct = round(total_cap_used / config['total_funds'] * 100, 2)
         risk_pct = round(total_risk_used / config['total_funds'] * 100, 2)
@@ -670,7 +670,7 @@ def evaluate_full_risk(trades_df, config, regime_label, vix):
             "Daily Risk Limit": daily_risk_limit,
             "Weekly Risk Limit": weekly_risk_limit,
             "Realized P&L": total_realized_pnl,
-            "Drawdown ₹": net_dd,
+            "Drawdown â‚¹": net_dd,
             "Drawdown %": dd_pct,
             "Max Drawdown Allowed": max_drawdown,
             "Flags": flags
@@ -747,7 +747,7 @@ def plot_drawdown_trend(portfolio_summary):
     fig, ax = plt.subplots(figsize=(10, 6))
     ax.plot(range(days), drawdowns, color="#00BFFF")
     ax.axhline(-portfolio_summary["Max Drawdown Allowed"], linestyle="--", color="red", label="Max Drawdown Allowed")
-    ax.set_title("Drawdown Trend (₹)", color="white")
+    ax.set_title("Drawdown Trend (â‚¹)", color="white")
     ax.legend()
     ax.grid(True, linestyle=':', alpha=0.6)
     ax.tick_params(axis='x', colors='white')
@@ -901,13 +901,13 @@ if st.session_state.logged_in and access_token:
     st.markdown("<h1 style='text-align: center;'>Market Insights Dashboard</h1>", unsafe_allow_html=True)
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.markdown(f"<div class='metric-box'><h3>Nifty 50 Spot</h3><div class='value'>₹{nifty:.2f}</div></div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='metric-box'><h3>Nifty 50 Spot</h3><div class='value'>â‚¹{nifty:.2f}</div></div>", unsafe_allow_html=True)
     with col2:
         st.markdown(f"<div class='metric-box'><h3>India VIX</h3><div class='value'>{vix:.2f}</div></div>", unsafe_allow_html=True)
     with col3:
         st.markdown(f"<div class='metric-box'><h3>ATM Strike</h3><div class='value'>{seller['strike']:.0f}</div></div>", unsafe_allow_html=True)
     with col4:
-        st.markdown(f"<div class='metric-box'><h3>Straddle Price</h3><div class='value'>₹{seller['straddle_price']:.2f}</div></div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='metric-box'><h3>Straddle Price</h3><div class='value'>â‚¹{seller['straddle_price']:.2f}</div></div>", unsafe_allow_html=True)
     
     col5, col6, col7, col8 = st.columns(4)
     with col5:
@@ -927,12 +927,12 @@ if st.session_state.logged_in and access_token:
         st.markdown(f"<div class='metric-box'><h4>IV - RV Spread:</h4> {iv_rv_spread:+.2f}%", unsafe_allow_html=True)
         st.markdown(f"<div class='metric-box'><h4>IV Skew Slope:</h4> {iv_skew_slope:.4f}", unsafe_allow_html=True)
         st.subheader("Breakeven & Max Pain")
-        st.markdown(f"<div class='metric-box'><h4>Breakeven Range:</h4> {seller['strike'] - seller['straddle_price']:.0f} – {seller['strike'] + seller['straddle_price']:.0f}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='metric-box'><h4>Breakeven Range:</h4> {seller['strike'] - seller['straddle_price']:.0f} â€“ {seller['strike'] + seller['straddle_price']:.0f}</div>", unsafe_allow_html=True)
         st.markdown(f"<div class='metric-box'><h4>Max Pain:</h4> {market['max_pain']:.0f}</div>", unsafe_allow_html=True)
         st.subheader("Greeks at ATM")
         st.markdown(f"<div class='metric-box'><h4>Delta</h4>{seller['delta']:.4f}</div>", unsafe_allow_html=True)
-        st.markdown(f"<div class='metric-box'><h4>Theta</h4>₹{seller['theta']:.2f}</div>", unsafe_allow_html=True)
-        st.markdown(f"<div class='metric-box'><h4>Vega</h4>₹{seller['vega']:.2f}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='metric-box'><h4>Theta</h4>â‚¹{seller['theta']:.2f}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='metric-box'><h4>Vega</h4>â‚¹{seller['vega']:.2f}</div>", unsafe_allow_html=True)
         st.markdown(f"<div class='metric-box'><h4>Gamma</h4>{seller['gamma']:.6f}</div>", unsafe_allow_html=True)
         st.markdown(f"<div class='metric-box'><h4>POP</h4>{seller['pop']:.2f}%</div>", unsafe_allow_html=True)
         st.subheader("Upcoming Events")
@@ -946,7 +946,7 @@ if st.session_state.logged_in and access_token:
     with tab2:
         st.subheader("Option Chain Analysis")
         plot_chain_analysis(full_chain_df)
-        st.subheader("ATM ±300 Chain Table")
+        st.subheader("ATM Â±300 Chain Table")
         st.dataframe(full_chain_df.style.set_properties(**{"background-color": "#1A1C24", "color": "white"}), use_container_width=True)
         st.subheader("Theta/Vega Ranking")
         eff_df = full_chain_df.copy()
@@ -974,7 +974,7 @@ if st.session_state.logged_in and access_token:
                     })
                     st.dataframe(order_df.style.set_properties(**{"background-color": "#1A1C24", "color": "white"}), use_container_width=True)
                     margin = calculate_strategy_margin(config, detail)
-                    st.markdown(f"<div class='metric-box'><h4>Estimated Margin Required</h4> ₹{margin:.2f}</div>", unsafe_allow_html=True)
+                    st.markdown(f"<div class='metric-box'><h4>Estimated Margin Required</h4> â‚¹{margin:.2f}</div>", unsafe_allow_html=True)
                     lots = st.number_input(f"Lots for {strat}", min_value=1, value=1, step=1, key=f"lots_{strat}")
                     if st.button(f"Place {strat} Order", key=f"place_{strat}"):
                         updated_detail = get_strategy_details(strat, option_chain, spot_price, config, lots=lots)
@@ -995,9 +995,9 @@ if st.session_state.logged_in and access_token:
         st.subheader("Portfolio Summary")
         col_p1, col_p2, col_p3, col_p4 = st.columns(4)
         with col_p1:
-            st.markdown(f"<div class='metric-box'><h3>Available Capital</h3><div class='value'>₹{funds_data['available_margin']:.2f}</div></div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='metric-box'><h3>Available Capital</h3><div class='value'>â‚¹{funds_data['available_margin']:.2f}</div></div>", unsafe_allow_html=True)
         with col_p2:
-            st.markdown(f"<div class='metric-box'><h3>Used Margin</h3><div class='value'>₹{funds_data['used_margin']:.2f}</div></div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='metric-box'><h3>Used Margin</h3><div class='value'>â‚¹{funds_data['used_margin']:.2f}</div></div>", unsafe_allow_html=True)
         with col_p3:
             st.markdown(f"<div class='metric-box'><h3>Exposure %</h3><div class='value'>{portfolio_summary['Exposure %']:.2f}%</div></div>", unsafe_allow_html=True)
         with col_p4:
@@ -1013,24 +1013,24 @@ if st.session_state.logged_in and access_token:
                 st.error(flag)
 
     with tab5:
-        st.markdown("<h2 style='color: #1E90FF;'>🚀 Place Strategy Orders</h2>", unsafe_allow_html=True)
+        st.markdown("<h2 style='color: #1E90FF;'>ðŸš€ Place Strategy Orders</h2>", unsafe_allow_html=True)
         st.subheader("Select Strategies to Execute")
         selected_strats = st.multiselect("Choose strategies:", strategies, default=strategies[:2])
-        execute_all = st.checkbox("✅ Execute All Selected Strategies")
-        if execute_all and st.button("🚀 Execute All"):
+        execute_all = st.checkbox("âœ… Execute All Selected Strategies")
+        if execute_all and st.button("ðŸš€ Execute All"):
             for strat in selected_strats:
                 detail = get_strategy_details(strat, option_chain, spot_price, config, lots=1)
                 if detail:
                     margin = calculate_strategy_margin(config, detail)
-                    st.info(f"Calculating margin for {strat}: ₹{margin:.2f}")
+                    st.info(f"Calculating margin for {strat}: â‚¹{margin:.2f}")
                     with st.spinner(f"Placing {strat}..."):
                         success = place_multi_leg_orders(config, detail["orders"])
                         if success:
-                            st.success(f"✅ {strat} executed with margin ₹{margin:.2f}")
+                            st.success(f"âœ… {strat} executed with margin â‚¹{margin:.2f}")
                         else:
-                            st.error(f"❌ {strat} execution failed")
+                            st.error(f"âŒ {strat} execution failed")
                 else:
-                    st.warning(f"⚠ Could not load details for {strat}")
+                    st.warning(f"âš  Could not load details for {strat}")
         st.markdown("---")
         st.subheader("Manual Strategy Execution")
         selected_strat = st.selectbox("Choose Strategy", strategies, key="manual_strategy")
@@ -1046,28 +1046,28 @@ if st.session_state.logged_in and access_token:
                 })
                 st.dataframe(order_df.style.set_properties(**{"background-color": "#1A1C24", "color": "white"}), use_container_width=True)
                 margin = calculate_strategy_margin(config, detail)
-                st.markdown(f"<div class='metric-box'><h3>Estimated Margin</h3><div class='value'>₹{margin:.2f}</div></div>", unsafe_allow_html=True)
-                if st.button(f"🚀 Place {selected_strat} Order", key="manual_place"):
+                st.markdown(f"<div class='metric-box'><h3>Estimated Margin</h3><div class='value'>â‚¹{margin:.2f}</div></div>", unsafe_allow_html=True)
+                if st.button(f"ðŸš€ Place {selected_strat} Order", key="manual_place"):
                     success = place_multi_leg_orders(config, detail["orders"])
                     if success:
-                        st.success(f"✅ {selected_strat} placed successfully!")
+                        st.success(f"âœ… {selected_strat} placed successfully!")
                     else:
-                        st.error(f"❌ Failed to place {selected_strat} order.")
+                        st.error(f"âŒ Failed to place {selected_strat} order.")
             else:
-                st.error(f"⚠ No details found for {selected_strat}")
+                st.error(f"âš  No details found for {selected_strat}")
 
 with tab6:
-    st.markdown("<h2 style='color: #1E90FF;'>🛡️ Risk Management Dashboard</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 style='color: #1E90FF;'>ðŸ›¡ï¸ Risk Management Dashboard</h2>", unsafe_allow_html=True)
     col_r1, col_r2, col_r3, col_r4 = st.columns(4)
     with col_r1:
-        st.markdown(f"<div class='metric-box'><h3>Total Risk</h3><div class='value'>₹{portfolio_summary['Risk on Table']:.2f}</div></div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='metric-box'><h3>Total Risk</h3><div class='value'>â‚¹{portfolio_summary['Risk on Table']:.2f}</div></div>", unsafe_allow_html=True)
     with col_r2:
         st.markdown(f"<div class='metric-box'><h3>Sharpe Ratio</h3><div class='value'>{sharpe_ratio:.2f}</div></div>", unsafe_allow_html=True)
     with col_r3:
         margin_pct = (funds_data["used_margin"] / funds_data["total_funds"] * 100) if funds_data["total_funds"] > 0 else 0
         st.markdown(f"<div class='metric-box'><h3>Margin Utilization</h3><div class='value'>{margin_pct:.2f}%</div></div>", unsafe_allow_html=True)
     with col_r4:
-        st.markdown(f"<div class='metric-box'><h3>Max Drawdown</h3><div class='value'>₹{portfolio_summary['Max Drawdown Allowed']:.2f}</div></div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='metric-box'><h3>Max Drawdown</h3><div class='value'>â‚¹{portfolio_summary['Max Drawdown Allowed']:.2f}</div></div>", unsafe_allow_html=True)
     st.subheader("Greeks Exposure")
     total_delta, total_theta, total_vega, total_gamma = 0.0, 0.0, 0.0, 0.0
     for pos in trades_df.to_dict("records"):
@@ -1085,11 +1085,11 @@ with tab6:
     with col_g1:
         st.markdown(f"<div class='metric-box'><h4>Delta</h4>{total_delta:.2f}</div>", unsafe_allow_html=True)
     with col_g2:
-        st.markdown(f"<div class='metric-box'><h4>Theta</h4>₹{total_theta:.2f}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='metric-box'><h4>Theta</h4>â‚¹{total_theta:.2f}</div>", unsafe_allow_html=True)
     with col_g3:
-        st.markdown(f"<div class='metric-box'><h4>Vega</h4>₹{total_vega:.2f}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='metric-box'><h4>Vega</h4>â‚¹{total_vega:.2f}</div>", unsafe_allow_html=True)
         if total_vega > 1000:
-            st.error("⚠ High Vega exposure! Risk of volatility spike.")
+            st.error("âš  High Vega exposure! Risk of volatility spike.")
     with col_g4:
         st.markdown(f"<div class='metric-box'><h4>Gamma</h4>{total_gamma:.6f}</div>", unsafe_allow_html=True)
     st.subheader("Capital Allocation")
@@ -1098,7 +1098,7 @@ with tab6:
     plot_drawdown_trend(portfolio_summary)
     max_drawdown_limit = 0.05 if vix > 20 else 0.03 if vix > 12 else 0.02
     if portfolio_summary["Drawdown %"] > max_drawdown_limit * 100:
-        st.error(f"⚠ Drawdown ({portfolio_summary['Drawdown %']:.2f}%) exceeds limit ({max_drawdown_limit*100:.2f}%)!")
+        st.error(f"âš  Drawdown ({portfolio_summary['Drawdown %']:.2f}%) exceeds limit ({max_drawdown_limit*100:.2f}%)!")
     st.subheader("All Positions")
     if not trades_df.empty:
         pos_df = trades_df[["strategy", "capital_used", "realized_pnl"]]
