@@ -175,7 +175,7 @@ def extract_seller_metrics(option_chain, spot_price):
             "vega": call["option_greeks"]["vega"] + put["option_greeks"]["vega"],
             "delta": call["option_greeks"]["delta"] + put["option_greeks"]["delta"],
             "gamma": call["option_greeks"]["gamma"] + put["option_greeks"]["gamma"],
-            "pop": ((call["option_greeks"]["pop"] + put["option_greeks"]["pop"]) / 2) * 100
+            "pop": ((call["option_greeks"]["pop"] + put["option_greeks"]["pop"]) / 2),
         }
     except Exception as e:
         st.warning(f":warning: Exception in extract_seller_metrics: {e}")
