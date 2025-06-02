@@ -233,7 +233,7 @@ def calculate_volatility(config, seller_avg_iv):
         df = df.sort_values('Date')
         df['Close'] = pd.to_numeric(df['Close'], errors='coerce')
         df['Log_Returns'] = np.log(df['Close'] / df['Close'].shift(1)).dropna()
-        hv_7 = np.std(df["Log_Returns"][-7:]) * np.sqrt(252) * 100
+        hv_7 = np.std(df["Log_Returns"][-7:]) * np.sqrt(249) * 100
         model = arch_model(df["Log_Returns"], vol="Garch", p=1, q=1)
         res = model.fit(disp="off")
         forecast = res.forecast(horizon=7)
