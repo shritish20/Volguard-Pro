@@ -1007,16 +1007,7 @@ with st.sidebar:
         except Exception as e:
             st.warning(":warning: Could not fetch user profile.")
 
-        st.markdown("### 💼 Portfolio Settings")
-        total_capital = st.slider("Total Capital (₹)", min_value=500_000, max_value=10_000_000, value=int(config['total_funds']), step=10_000)
-        daily_risk_limit_pct = st.slider("Daily Risk Limit (%)", 0.0, 5.0, float(config['daily_risk_limit_pct'] * 100), step=0.1) / 100
-        weekly_risk_limit_pct = st.slider("Weekly Risk Limit (%)", 0.0, 10.0, float(config['weekly_risk_limit_pct'] * 100), step=0.1) / 100
-        risk_per_strategy = st.slider("Max Risk per Strategy (%)", 0.0, 5.0, 1.0, step=0.1) / 100
-
-        # Update config values based on user input
-        config['total_funds'] = total_capital
-        config['daily_risk_limit_pct'] = daily_risk_limit_pct
-        config['weekly_risk_limit_pct'] = weekly_risk_limit_pct
+        
 
 # --- Main App ---
 if st.session_state.logged_in:
