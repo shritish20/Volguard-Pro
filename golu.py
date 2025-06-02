@@ -1149,7 +1149,7 @@ if st.session_state.logged_in and access_token:
         with col_p2:
             st.markdown(f"<div class='metric-box'><h3>Used Margin</h3><div class='value'>₹{funds_data['used_margin']:.2f}</div></div>", unsafe_allow_html=True)
         with col_p3:
-            st.markdown(f"<div class='metric-box'><h3>Exposure %</h3><div class='value'>{portfolio_summary['Exposure %']:.2f}%</div></div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='metric-box'><h3>Exposure %</h3><div class='value'>{portfolio_summary.get('Exposure Percent', 0):.2f}%</div></div>", unsafe_allow_html=True)
         with col_p4:
             st.markdown(f"<div class='metric-box'><h3>Sharpe Ratio</h3><div class='value'>{sharpe_ratio:.2f}</div></div>", unsafe_allow_html=True)
 
