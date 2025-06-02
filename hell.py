@@ -728,7 +728,8 @@ if st.session_state.logged_in:
         rationale.append(f"Expected move: ±{expected_move_pct:.2f}% based on straddle price.")
         return strategies, " | ".join(rationale), event_warning
 
-    def get_funds_and_margin(config):
+
+def get_funds_and_margin(config):
     try:
         url = f"{config['base_url']}/user/get-funds-and-margin?segment=SEC"
         res = requests.get(url, headers=config['headers'])
@@ -744,7 +745,8 @@ if st.session_state.logged_in:
         return {"available_margin": 0, "used_margin": 0, "total_funds": 0}
     except Exception as e:
         st.error(f":warning: Exception in get_funds_and_margin: {e}")
-        return {"available_margin": 0, "used_margin": 0, "total_funds": 0}
+        return {"available_margin": 0, "used_margin": 0, "total_funds": 0}    
+    
 
     def calculate_sharpe_ratio():
         try:
