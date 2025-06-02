@@ -1219,7 +1219,7 @@ if st.session_state.logged_in:
                                     trigger_price = order["current_price"] * (1 + sl_percentage / 100)
                                     create_gtt_order(config, order["instrument_key"], trigger_price, "BUY", tag=f"SL_{selected_strategy}")
                             st.session_state.order_status = f":white_check_mark: Placed {selected_strategy} order with {lots} lots and SL at {sl_percentage}%!"
-                            st.experimental_rerun()
+                            st.rerun()
                         else:
                             st.error(f":x: Failed to place {selected_strategy} order.")
                     else:
