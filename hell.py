@@ -1250,5 +1250,5 @@ def get_funds_and_margin(config):
     # --- FOOTER ---
     st.markdown("---")
     st.markdown("<div style='text-align:center;'>© 2025 VolGuard by Shritish Shukla. All rights reserved.</div>", unsafe_allow_html=True)
- else:
-     st.markdown("<h1 style='text-align:center;'>🔒 Please log in to continue</h1>", unsafe_allow_html=True)
+    else:
+         st.markdown("<h1 style='text-align:center;'>🔒 Please log in to continue</h1>", unsafe_allow_html=True)
