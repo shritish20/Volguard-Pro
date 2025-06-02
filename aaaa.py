@@ -969,7 +969,9 @@ if 'order_status' not in st.session_state:
 with st.sidebar:
     st.markdown("<h2>🔐 Login</h2>", unsafe_allow_html=True)
     access_token = st.text_input("Enter Upstox Access Token", type="password", value=st.session_state.access_token)
+
     col_login1, col_login2 = st.columns([2, 1])
+    
     with col_login1:
         if st.button("Login"):
             if access_token:
@@ -987,6 +989,7 @@ with st.sidebar:
                     st.warning(f":warning: Error validating token: {e}")
             else:
                 st.error(":x: Please enter an access token.")
+    
     with col_login2:
         if st.session_state.logged_in and st.button("Logout"):
             logout(config)
@@ -998,21 +1001,19 @@ with st.sidebar:
             if user_profile_res.status_code == 200:
                 user_data = user_profile_res.json()['data']
                 st.markdown("---")
-                st.markdown(f"**User:** {user_data['user_name']} ({user_data['email']})")
-                st.markdown(f"**Broker:** {user_data['broker']}")
-                st.markdown(f"**Products:** {user_data['products']}")
-                st.markdown(f"**Order Types:** {user_data['order_types']}")
-                st.markdown(f"**Exchanges:** {user_data['exchanges']}")
+                # Display only capitalized user name (e.g., "SHRITISH")
+                st.markdown(f"**👤 User:** {user_data['user_name'].upper()}")
                 st.markdown("---")
-        except:
-            pass
+        except Exception as e:
+            st.warning(":warning: Could not fetch user profile.")
 
         st.markdown("### 💼 Portfolio Settings")
-        total_capital = st.slider("Total Capital (₹)", min_value=500000, max_value=10000000, value=int(config['total_funds']), step=10000)
+        total_capital = st.slider("Total Capital (₹)", min_value=500_000, max_value=10_000_000, value=int(config['total_funds']), step=10_000)
         daily_risk_limit_pct = st.slider("Daily Risk Limit (%)", 0.0, 5.0, float(config['daily_risk_limit_pct'] * 100), step=0.1) / 100
         weekly_risk_limit_pct = st.slider("Weekly Risk Limit (%)", 0.0, 10.0, float(config['weekly_risk_limit_pct'] * 100), step=0.1) / 100
         risk_per_strategy = st.slider("Max Risk per Strategy (%)", 0.0, 5.0, 1.0, step=0.1) / 100
 
+        # Update config values based on user input
         config['total_funds'] = total_capital
         config['daily_risk_limit_pct'] = daily_risk_limit_pct
         config['weekly_risk_limit_pct'] = weekly_risk_limit_pct
