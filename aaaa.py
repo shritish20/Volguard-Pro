@@ -998,7 +998,10 @@ with st.sidebar:
             if user_profile_res.status_code == 200:
                 user_data = user_profile_res.json()['data']
                 st.markdown("---")
-                st.markdown(f"**User:** {user_data['user_name']}
+                st.markdown(f"**User:** {user_data['user_name']} ({user_data['email']})")
+                st.markdown(f"**Broker:** {user_data['broker']}")
+                st.markdown(f"**Products:** {user_data['products']}")
+                st.markdown(f"**Order Types:** {user_data['order_types']}")
                 st.markdown(f"**Exchanges:** {user_data['exchanges']}")
                 st.markdown("---")
         except:
