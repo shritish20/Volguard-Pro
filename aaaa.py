@@ -1154,7 +1154,7 @@ if st.session_state.logged_in:
                             success = place_multi_leg_orders(config, updated_detail["orders"])
                             if success:
                                 st.session_state.order_status = f":white_check_mark: Placed {strat} order with {lots} lots!"
-                                st.experimental_rerun()
+                                st.rerun()
                             else:
                                 st.error(f":x: Failed to place {strat} order.")
                         else:
