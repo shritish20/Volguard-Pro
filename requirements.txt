@@ -16,4 +16,5 @@ requests
 numpy 
 arch
 retrying 
+streamlit-autorefresh
 seaborn
