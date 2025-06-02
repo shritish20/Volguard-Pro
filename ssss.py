@@ -1181,7 +1181,8 @@ if st.session_state.logged_in and access_token:
                             else:
                                 st.error(f":x: Failed to place {strat} order.")
                         else:
-                            st.error(f":x: Unable to generate order details for {strat}.")st.markdown(f"<div class='metric-box'><h4>Max Profit</h4> ₹{detail.get('max_profit', 0):,.2f}</div>", unsafe_allow_html=True)
+                            st.error(f":x: Unable to generate order details for {strat}.")
+                            st.markdown(f"<div class='metric-box'><h4>Max Profit</h4> ₹{detail.get('max_profit', 0):,.2f}</div>", unsafe_allow_html=True)
                     st.markdown(f"<div class='metric-box'><h4>Max Loss</h4> ₹{detail.get('max_loss', float('inf')):,.2f}</div>", unsafe_allow_html=True)
                 else:
                     st.warning(f":warning: Unable to fetch details for {strat}.")
