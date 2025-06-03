@@ -102,14 +102,19 @@ def get_indices_quotes(config):
         st.error(f":warning: Exception in get_indices_quotes: {e}")
         return None, None
 
+
 @st.cache_data(ttl=3600)
 def load_upcoming_events(config):
     try:
         df = pd.read_csv(config['event_url'])
-        df["Datetime"] = df["Date"] + " " + df["Time"]
-        df["Datetime"] = pd.to_datetime(df["Datetime"], format="%d-%b %H:%M", errors="coerce")
+        df["Datetime"] = pd.to_datetime(df["Date"].str.strip() + " " + df["Time"].str.strip(), format="%d-%b %H:%M", errors="coerce")
+
+        # Fix year explicitly only if missing (default may be 1900 or NaT)
         current_year = datetime.now().year
-        df["Datetime"] = df["Datetime"].apply(lambda dt: dt.replace(year=current_year) if pd.notnull(dt) else dt)
+        df["Datetime"] = df["Datetime"].apply(
+            lambda dt: dt.replace(year=current_year) if pd.notnull(dt) and dt.year == 1900 else dt
+        )
+
         now = datetime.now()
         expiry_dt = datetime.strptime(config['expiry_date'], "%Y-%m-%d")
         mask = (df["Datetime"] >= now) & (df["Datetime"] <= expiry_dt)
