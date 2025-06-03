@@ -412,7 +412,6 @@ def calculate_regime(atm_iv, ivp, realized_vol, garch_vol, straddle_price, spot_
     regime_score += 5 if abs(iv_skew_slope) > 0.001 else 0
     regime_score += 10 if expected_move > 0.05 else -10 if expected_move < 0.02 else 0
     regime_score += 5 if garch_vol > realized_vol * 1.2 else -5 if garch_vol < realized_vol * 0.8 else 0
-
     if regime_score > 20:
         return regime_score, ":fire: High Vol Trend", "Market in high volatility — ideal for premium selling.", "High IVP, elevated VIX, and wide straddle suggest strong premium opportunities."
     elif regime_score > 10:
@@ -506,6 +505,18 @@ def calculate_sharpe_ratio():
     except Exception as e:
         st.warning(f":warning: Exception in calculate_sharpe_ratio: {e}")
         return 0
+
+def calculate_strategy_premium(orders, lot_size):
+    total_premium = 0
+    for order in orders:
+        price = order.get("current_price", 0)
+        qty = order.get("quantity", 0)
+        if order["transaction_type"] == "SELL":
+            total_premium += price * qty
+        else:
+            total_premium -= price * qty
+    premium_per_lot = total_premium / lot_size
+    return premium_per_lot, total_premium
 
 def calculate_strategy_margin(config, strategy_details):
     try:
@@ -663,11 +674,35 @@ def get_strategy_details(strategy_name, option_chain, spot_price, config, lots=1
         detail["max_profit"] = detail["premium_total"] if strategy_name != "Calendar Spread" else float("inf")
     return detail
 
+def find_option_by_strike(option_chain, strike, option_type):
+    try:
+        for opt in option_chain:
+            if abs(opt["strike_price"] - strike) < 0.01:
+                if option_type == "CE" and "call_options" in opt:
+                    return opt["call_options"]
+                elif option_type == "PE" and "put_options" in opt:
+                    return opt["put_options"]
+        st.warning(f":warning: No option found for strike {strike} {option_type}")
+        return None
+    except Exception as e:
+        st.warning(f":warning: Exception in find_option_by_strike: {e}")
+        return None
+
+def get_dynamic_wing_distance(ivp, straddle_price):
+    if ivp >= 80:
+        multiplier = 0.35
+    elif ivp <= 20:
+        multiplier = 0.2
+    else:
+        multiplier = 0.25
+    raw_distance = straddle_price * multiplier
+    return int(round(raw_distance / 50.0)) * 50  # Round to nearest 50 for Nifty
+
 def _iron_fly_calc(option_chain, spot_price, config, lots):
     atm = min(option_chain, key=lambda x: abs(x["strike_price"] - spot_price))
     strike = atm["strike_price"]
     straddle_price = atm["call_options"]["market_data"]["ltp"] + atm["put_options"]["market_data"]["ltp"]
-    wing_distance = int(round(straddle_price * 0.3))
+    wing_distance = get_dynamic_wing_distance(ivp, straddle_price)
     ce_short_opt = find_option_by_strike(option_chain, strike, "CE")
     pe_short_opt = find_option_by_strike(option_chain, strike, "PE")
     ce_long_opt = find_option_by_strike(option_chain, strike + wing_distance, "CE")
@@ -687,8 +722,8 @@ def _iron_condor_calc(option_chain, spot_price, config, lots):
     atm = min(option_chain, key=lambda x: abs(x["strike_price"] - spot_price))
     strike = atm["strike_price"]
     straddle_price = atm["call_options"]["market_data"]["ltp"] + atm["put_options"]["market_data"]["ltp"]
-    short_wing_distance = int(round(straddle_price * 0.3))
-    long_wing_distance = int(round(straddle_price * 0.5))
+    short_wing_distance = get_dynamic_wing_distance(ivp, straddle_price)
+    long_wing_distance = int(round(short_wing_distance * 1.5 / 50)) * 50
     ce_short_opt = find_option_by_strike(option_chain, strike + short_wing_distance, "CE")
     pe_short_opt = find_option_by_strike(option_chain, strike - short_wing_distance, "PE")
     ce_long_opt = find_option_by_strike(option_chain, strike + long_wing_distance, "CE")
@@ -794,20 +829,6 @@ def _atm_strangle_calc(option_chain, spot_price, config, lots):
         {"instrument_key": pe_short_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "SELL"}
     ]
     return {"strategy": "ATM Strangle", "strikes": [call_strike, put_strike], "orders": orders}
-
-def find_option_by_strike(option_chain, strike, option_type):
-    try:
-        for opt in option_chain:
-            if abs(opt["strike_price"] - strike) < 0.01:
-                if option_type == "CE" and "call_options" in opt:
-                    return opt["call_options"]
-                elif option_type == "PE" and "put_options" in opt:
-                    return opt["put_options"]
-        st.warning(f":warning: No option found for strike {strike} {option_type}")
-        return None
-    except Exception as e:
-        st.warning(f":warning: Exception in find_option_by_strike: {e}")
-        return None
 
 def evaluate_full_risk(trades_df, config, regime_label, vix):
     try:
@@ -1037,7 +1058,40 @@ st.markdown("""
 .metric-box { background-color: #1A1C24; padding: 15px; border-radius: 8px; margin-bottom: 10px; }
 .metric-box h3 { color: #6495ED; font-size: 1em; margin-bottom: 5px; }
 .metric-box .value { font-size: 1.8em; font-weight: bold; color: #00BFFF; }
+
+/* Sidebar styling */
+section[data-testid="stSidebar"] > div:first-child {
+    background-color: #1A1C24;
+    padding: 1.5rem;
+}
+section[data-testid="stSidebar"] .stTextInput > div > div > input {
+    background-color: #2E2F38;
+    color: white;
+    border: 1px solid #00BFFF;
+}
+section[data-testid="stSidebar"] .stButton > button {
+    background-color: #00BFFF;
+    color: white;
+    border-radius: 0.5rem;
+}
+section[data-testid="stSidebar"] .stRadio > div {
+    background-color: #2E2F38;
+    border-radius: 0.5rem;
+    padding: 0.5rem;
+}
+section[data-testid="stSidebar"] label {
+    color: white !important;
+}
 </style>""", unsafe_allow_html=True)
+
+# Sidebar logo/header
+st.sidebar.markdown("""
+
+🚀 **VolGuard**
+
+Your Options Copilot
+
+""")
 
 # Sidebar login/logout
 if 'access_token' not in st.session_state:
@@ -1046,6 +1100,7 @@ if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
 
 access_token = st.sidebar.text_input("Enter Upstox Access Token", type="password", value=st.session_state.access_token)
+
 if st.sidebar.button("Login"):
     if access_token:
         config = get_config(access_token)
@@ -1160,7 +1215,6 @@ if st.session_state.logged_in and access_token:
         st.markdown(f"<div class='metric-box'><h4>Vega</h4>₹{seller['vega']:.2f}</div>", unsafe_allow_html=True)
         st.markdown(f"<div class='metric-box'><h4>Gamma</h4>{seller['gamma']:.6f}</div>", unsafe_allow_html=True)
         st.markdown(f"<div class='metric-box'><h4>POP</h4>{seller['pop']:.2f}%</div>", unsafe_allow_html=True)
-
         st.subheader("Upcoming Events")
         if not event_df.empty:
             st.dataframe(event_df.style.set_properties(**{'background-color': '#1A1C24', 'color': 'white'}), use_container_width=True)
@@ -1242,16 +1296,12 @@ if st.session_state.logged_in and access_token:
             st.markdown(f"<div class='metric-box'><h3>Exposure %</h3><div class='value'>{portfolio_summary.get('Exposure Percent', 0):.2f}%</div></div>", unsafe_allow_html=True)
         with col_p4:
             st.markdown(f"<div class='metric-box'><h3>Sharpe Ratio</h3><div class='value'>{sharpe_ratio:.2f}</div></div>", unsafe_allow_html=True)
-
         st.subheader("Capital Allocation")
         plot_allocation_pie(strategy_df, config)
-
         st.subheader("Drawdown Trend")
         plot_drawdown_trend(portfolio_summary)
-
         st.subheader("Margin Utilization")
         plot_margin_gauge(funds_data)
-
         st.subheader("Strategy Risk Summary")
         if not strategy_df.empty:
             st.dataframe(strategy_df.style.set_properties(**{"background-color": "#1A1C24", "color": "white"}), use_container_width=True)
