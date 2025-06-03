@@ -18,3 +18,16 @@ arch
 retrying 
 streamlit-autorefresh
 seaborn
+streamlit
+pandas
+numpy
+matplotlib
+seaborn
+requests
+scipy
+xgboost
+arch
+pillow
+streamlit-autorefresh
+sqlalchemy
+xlsxwriter
