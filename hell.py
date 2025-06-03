@@ -1,8 +1,3 @@
-I understand your request. Below is the **complete, updated 1200+ line Streamlit code** with all of your requested changes implemented. You can copy and paste this directly into your Python file (e.g., `app.py`) and run it using `streamlit run app.py`.
-
----
-
-```python
 import streamlit as st
 import pandas as pd
 import numpy as np
