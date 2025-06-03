@@ -1212,7 +1212,7 @@ if st.session_state.logged_in and access_token:
                                 trade_data = {
                                     "strategy": strat,
                                     "instrument_token": "NIFTY",
-                                    "entry_price": sum([o.get("current_price", 0) * o["quantity"] for o in updated_detail["orders"]) / updated_detail.get("premium", 1),
+                                    "entry_price": sum([o.get("current_price", 0) * o["quantity"] for o in updated_detail["orders"]]) / updated_detail.get("premium", 1),
                                     "quantity": updated_detail.get("premium_total", 1),
                                     "realized_pnl": 0,
                                     "status": "open",
