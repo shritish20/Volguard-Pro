@@ -1125,7 +1125,7 @@ if st.session_state.logged_in and st.sidebar.button("Logout"):
     st.session_state.logged_in = False
     st.session_state.access_token = ""
     st.cache_data.clear()
-    st.experimental_rerun()
+    st.rerun()
 
 # Main App Logic
 if st.session_state.logged_in and access_token:
