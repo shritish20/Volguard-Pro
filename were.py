@@ -18,7 +18,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 import base64
 from streamlit_autorefresh import st_autorefresh
-
+from arch import arch_model
 # --- DATABASE SETUP (In Memory) ---
 Base = declarative_base()
 class TradeLog(Base):
