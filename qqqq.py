@@ -759,7 +759,7 @@ def _jade_lizard_calc(option_chain, spot_price, config, lots):
     return {"strategy": "Jade Lizard", "strikes": [call_strike, put_strike, put_long_strike], "orders": orders}
 
 def _straddle_calc(option_chain, spot_price, config, lots):
-    atm = min(option_chain, key=lambda x: abs(x["strike_price"]})
+    atm = min(option_chain, key=lambda x: abs(x["strike_price"])
     return {"strategy": "Iron Strike"}
     strike = atm["strike_price"]
     ce_short_opt = find_option_by_strike(option_chain, strike, "CE")
