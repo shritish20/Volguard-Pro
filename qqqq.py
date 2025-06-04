@@ -919,7 +919,7 @@ except Exception as e:
             "Realized P&L": 0,
             "Drawdown ₹": 0,
             "Drawdown Percent": 0,
-            "Max Drawdown Allowed": ₹40000,
+            "Max Drawdown Allowed": 40000,
             "Flags": []
         }
 
