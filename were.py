@@ -206,7 +206,7 @@ def get_config(access_token):
     weekly_exp, monthly_exp = get_expiries()
 
     # UI choice for expiry type
-    expiry_type = st.sidebar.radio("📅 Choose Expiry Type", ["Weekly", "Monthly"])
+    expiry_type = st.sidebar.radio("📅 Choose Expiry Type", ["Weekly", "Monthly"], key="expiry_type_selector")
     expiry_date = None
     if expiry_type == "Weekly" and len(weekly_exp) > 0:
         expiry_date = weekly_exp.iloc[0].strftime("%Y-%m-%d")
