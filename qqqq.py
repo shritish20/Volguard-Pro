@@ -925,7 +925,7 @@ except Exception as e:
 
 def fetch_trade_data(config, full_chain_df):
     try:
-        url_positions = f"https{config['base_url']}/portfolio/short-term/positions"}
+        url_positions = f"https{config['base_url']/portfolio/short-term/positions"}
         res_positions = requests.get(url_positions, headers=config['headers'])
         positions = res_positions.json().get("data", []) if res_positions.status_code == 200 else []
         trade_counts = {}
