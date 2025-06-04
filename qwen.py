@@ -1316,71 +1316,85 @@ if st.session_state.logged_in and access_token:
     # MANUAL ORDERS TAB
     elif st.session_state.active_tab == "Manual Orders":
         st.subheader("📥 Manual Multi-Leg Order Placement")
+
         selected_strategy = st.selectbox("Select Strategy", all_strategies, key="manual_strategy")
         lots = st.number_input("Number of Lots", min_value=1, value=1, step=1, key="manual_lots")
         sl_percentage = st.slider("Stop Loss %", 0.0, 50.0, 10.0, 0.5, key="manual_sl_pct")
         order_type = st.radio("Order Type", ["MARKET", "LIMIT"], horizontal=True)
         validity = st.radio("Order Validity", ["DAY", "IOC"], horizontal=True)
-        detail = get_strategy_details(selected_strategy, option_chain, spot_price, config, lots=lots)
-        if detail:
-            st.write("🧮 Strategy Legs (Editable)")
-            updated_orders = []
-            for idx, order in enumerate(detail["orders"]):
-                col1, col2, col3, col4, col5 = st.columns(5)
-                with col1:
-                    st.markdown(f"**Leg {idx+1}**")
-                with col2:
-                    qty = st.number_input(f"Qty {idx+1}", min_value=1, value=order["quantity"], step=1, key=f"qty_{idx}")
-                with col3:
-                    tx_type = st.selectbox(f"Type {idx+1}", ["BUY", "SELL"], index=0 if order["transaction_type"] == "BUY" else 1, key=f"tx_{idx}")
-                with col4:
-                    price = st.number_input(f"Price {idx+1}", min_value=0.0, value=order.get("current_price", 0.0), step=0.05, key=f"price_{idx}")
-                with col5:
-                    st.code(order["instrument_key"], language="text")
-                updated_orders.append({
-                    "instrument_key": order["instrument_key"],
-                    "quantity": qty,
-                    "transaction_type": tx_type,
-                    "order_type": order_type,
-                    "validity": validity,
-                    "product": "D",
-                    "current_price": price
-                })
-            st.markdown("---")
-            margin = calculate_strategy_margin(config, detail)
-            st.markdown(f"💰 **Estimated Margin:** ₹{margin * lots:.2f}")
-            st.markdown(f"🔻 **Max Loss:** ₹{detail['max_loss'] * lots:.2f}")
-            st.markdown(f"🟢 **Max Profit:** ₹{detail['max_profit'] * lots:.2f}")
-            if st.button("🚀 Place Multi-Leg Order"):
-                payload = []
-                for idx, leg in enumerate(updated_orders):
-                    correlation_id = f"mleg_{idx}_{int(time()) % 100000}"
-                    payload.append({
-                        "quantity": abs(leg["quantity"]),
+
+        if selected_strategy:
+            detail = get_strategy_details(selected_strategy, option_chain, spot_price, config, lots=lots)
+
+            if detail:
+                st.write("🧮 Strategy Legs (Editable)")
+
+                updated_orders = []
+                for idx, order in enumerate(detail["orders"]):
+                    col1, col2, col3, col4, col5 = st.columns(5)
+                    with col1:
+                        st.markdown(f"**Leg {idx + 1}**")
+                    with col2:
+                        qty = st.number_input(f"Qty {idx+1}", min_value=1, value=order["quantity"], step=1, key=f"qty_{idx}")
+                    with col3:
+                        tx_type = st.selectbox(f"Type {idx+1}", ["BUY", "SELL"], index=0 if order["transaction_type"] == "BUY" else 1, key=f"tx_{idx}")
+                    with col4:
+                        price = st.number_input(f"Price {idx+1}", min_value=0.0, value=order.get("current_price", 0.0), step=0.05, key=f"price_{idx}")
+                    with col5:
+                        instr = order["instrument_key"]
+                        st.code(instr, language="text")
+
+                    updated_orders.append({
+                        "instrument_key": instr,
+                        "quantity": qty,
+                        "transaction_type": tx_type,
+                        "order_type": order_type,
+                        "validity": validity,
                         "product": "D",
-                        "validity": leg["validity"],
-                        "price": leg["current_price"],
-                        "tag": f"{leg['instrument_key']}_leg_{idx}",
-                        "slice": False,
-                        "instrument_token": leg["instrument_key"],
-                        "order_type": leg["order_type"],
-                        "transaction_type": leg["transaction_type"],
-                        "disclosed_quantity": 0,
-                        "trigger_price": 0,
-                        "is_amo": False,
-                        "correlation_id": correlation_id
+                        "current_price": price
                     })
-                url = f"{config['base_url']}/order/multi/place"
-                res = requests.post(url, headers=config['headers'], json={"instruments": payload})
-                if res.status_code == 200:
-                    st.success(":white_check_mark: Multi-leg order placed successfully!")
-                    for leg in updated_orders:
-                        if leg["transaction_type"] == "SELL":
-                            sl_price = leg["current_price"] * (1 + sl_percentage / 100)
-                            create_gtt_order(config, leg["instrument_key"], sl_price, "BUY", tag=f"SL_{selected_strategy}")
-                    st.success(f"🛡️ SL orders placed at {sl_percentage}% above sell price.")
-                else:
-                    st.error(f":x: Failed to place order: {res.status_code} - {res.text}")
+
+                st.markdown("---")
+                margin = calculate_strategy_margin(config, detail) * lots
+                st.markdown(f"💰 **Estimated Margin:** ₹{margin:,.2f}")
+                st.markdown(f"💵 **Premium Collected:** ₹{detail['premium_total'] * lots:,.2f}")
+                st.markdown(f"🔻 **Max Loss:** ₹{detail['max_loss'] * lots:,.2f}")
+                st.markdown(f"🟢 **Max Profit:** ₹{detail['max_profit'] * lots:,.2f}")
+
+                if st.button("🚀 Place Multi-Leg Order"):
+                    payload = []
+                    for idx, leg in enumerate(updated_orders):
+                        correlation_id = f"mleg_{idx}_{int(time()) % 100000}"
+                        payload.append({
+                            "quantity": leg["quantity"],
+                            "product": "D",
+                            "validity": leg["validity"],
+                            "price": leg["current_price"],
+                            "tag": f"{leg['instrument_key']}_leg_{idx}",
+                            "slice": False,
+                            "instrument_token": leg["instrument_key"],
+                            "order_type": leg["order_type"],
+                            "transaction_type": leg["transaction_type"],
+                            "disclosed_quantity": 0,
+                            "trigger_price": 0,
+                            "is_amo": False,
+                            "correlation_id": correlation_id
+                        })
+
+                    url = f"{config['base_url']}/order/multi/place"
+                    res = requests.post(url, headers=config['headers'], json=payload)
+                    if res.status_code == 200:
+                        st.success(f"✅ Multi-leg order placed successfully!")
+
+                        # Place SL orders for each SELL leg
+                        for leg in updated_orders:
+                            if leg["transaction_type"] == "SELL":
+                                sl_price = leg["current_price"] * (1 + sl_percentage / 100)
+                                create_gtt_order(config, leg["instrument_key"], sl_price, "BUY", tag=f"SL_{selected_strategy}")
+                        st.success(f"🛡️ SL orders placed at {sl_percentage}% above sell price.")
+                    else:
+                        st.error(f"❌ Failed to place order: {res.status_code} - {res.text}")
+
         else:
             st.error(":x: Unable to generate order details.")
 
