@@ -881,7 +881,7 @@ def evaluate_full_risk(trades_df, config, regime_label, vix):
                     flags.append(f"❌ {strat} exceeded risk limit")
                 if sl_hit:
                     flags.append(f"⚠️ {strat} indicates possible revenge trading")
-")
+
         net_dd = -total_realized_pnl if total_realized_pnl < 0 else 0
         exposure_pct = round(total_cap_used / total_funds * 100, 2) if total_funds else 0
         risk_pct = round(total_risk_used / total_funds * 100, 2) if total_funds else 0
