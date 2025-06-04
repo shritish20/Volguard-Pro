@@ -549,12 +549,13 @@ def calculate_strategy_margin(config, strategy_details):
         st.warning(f":warning: Error calculating strategy margin: {e}")
         return 0
 
+
 def place_multi_leg_orders(config, orders):
     try:
         sorted_orders = sorted(orders, key=lambda x: 0 if x["transaction_type"] == "BUY" else 1)
         payload = []
         for idx, order in enumerate(sorted_orders):
-            correlation_id = f"s{idx}_{int(time()) % 1000000}"
+            correlation_id = f"s{idx}_{int(time()) % 1000000}"  # Max 20 chars
             payload.append({
                 "quantity": abs(order["quantity"]),
                 "product": "D",
@@ -575,8 +576,9 @@ def place_multi_leg_orders(config, orders):
         if res.status_code == 200:
             st.success(":white_check_mark: Multi-leg order placed successfully!")
             return True
-        st.error(f":x: Failed to place multi-leg order: {res.status_code} - {res.text}")
-        return False
+        else:
+            st.error(f":x: Failed to place multi-leg order: {res.status_code} - {res.text}")
+            return False
     except Exception as e:
         st.error(f":warning: Error placing multi-leg order: {e}")
         return False
@@ -601,8 +603,9 @@ def create_gtt_order(config, instrument_token, trigger_price, transaction_type="
         if res.status_code == 200:
             st.success(f":white_check_mark: GTT order placed for {instrument_token}")
             return True
-        st.warning(f":warning: GTT failed: {res.status_code} - {res.text}")
-        return False
+        else:
+            st.warning(f":warning: GTT failed: {res.status_code} - {res.text}")
+            return False
     except Exception as e:
         st.error(f":warning: Error creating GTT: {e}")
         return False
