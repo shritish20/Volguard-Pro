@@ -158,9 +158,6 @@ all_strategies = [
     "Calendar Spread", "Bull Put Spread", "Wide Strangle", "ATM Strangle"
 ]
 
-# --- Sidebar Expiry Type Selection ---
-expiry_type = st.sidebar.radio("📅 Choose Expiry Type", ["Weekly", "Monthly"], key="expiry_type_selector")
-
 # --- Configuration ---
 def get_config(access_token, expiry_type):
     config = {
@@ -188,37 +185,37 @@ def get_config(access_token, expiry_type):
         },
         "daily_risk_limit_pct": 0.02,
         "weekly_risk_limit_pct": 0.03,
-        "lot_size": 75
+        "lot_size": 50
     }
 
-    def get_expiries():
+    @st.cache_data(ttl=3600)
+    def get_expiries(_config):
         try:
-            url = f"{config['base_url']}/option/contract"
-            params = {"instrument_key": config["instrument_key"]}
-            res = requests.get(url, headers=config['headers'], params=params)
+            url = f"{_config['base_url']}/option/contract"
+            params = {"instrument_key": _config["instrument_key"]}
+            res = requests.get(url, headers=_config["headers"], params=params)
             if res.status_code == 200:
                 df = pd.DataFrame(res.json()["data"])
                 df["expiry"] = pd.to_datetime(df["expiry"])
                 weekly = df[df["weekly"] == True]["expiry"].drop_duplicates().sort_values()
                 monthly = df[df["weekly"] == False]["expiry"].drop_duplicates().sort_values()
                 return weekly, monthly
-            return [], []
+            return pd.Series(), pd.Series()
         except Exception as e:
             st.warning(f"Error fetching expiries: {e}")
-            return [], []
+            return pd.Series(), pd.Series()
 
-    # Fetch expiries
-    weekly_exp, monthly_exp = get_expiries()
+    weekly_exp, monthly_exp = get_expiries(config)
 
-    # Use expiry_type from sidebar
     expiry_date = None
-    if expiry_type == "Weekly" and len(weekly_exp) > 0:
+    if expiry_type == "Weekly" and not weekly_exp.empty:
         expiry_date = weekly_exp.iloc[0].strftime("%Y-%m-%d")
-    elif expiry_type == "Monthly" and len(monthly_exp) > 0:
+    elif expiry_type == "Monthly" and not monthly_exp.empty:
         expiry_date = monthly_exp.iloc[0].strftime("%Y-%m-%d")
     else:
         expiry_date = datetime.now().strftime("%Y-%m-%d")
-        st.warning("Could not fetch valid expiry. Defaulting to today.")
+        if weekly_exp.empty and monthly_exp.empty:
+            st.warning("Could not fetch valid expiry. Defaulting to today.")
 
     config["expiry_date"] = expiry_date
     return config
@@ -341,7 +338,8 @@ def full_chain_table(option_chain, spot_price):
         chain_data = []
         for opt in option_chain:
             strike = opt["strike_price"]
-            if abs(strike - spot_price) <= 300:
+            # Widen the range for a more comprehensive view
+            if abs(strike - spot_price) <= 500:
                 call = opt["call_options"]
                 put = opt["put_options"]
                 chain_data.append({
@@ -372,10 +370,10 @@ def market_metrics(option_chain, expiry_date):
         for strike in strikes:
             pain_at_strike = 0
             for opt in option_chain:
-                if "call_options" in opt:
-                    pain_at_strike += max(0, strike - opt["strike_price"]) * opt["call_options"]["market_data"]["oi"]
-                if "put_options" in opt:
-                    pain_at_strike += max(0, opt["strike_price"] - strike) * opt["put_options"]["market_data"]["oi"]
+                if "call_options" in opt and "market_data" in opt["call_options"]:
+                     pain_at_strike += max(0, strike - opt["strike_price"]) * opt["call_options"]["market_data"]["oi"]
+                if "put_options" in opt and "market_data" in opt["put_options"]:
+                     pain_at_strike += max(0, opt["strike_price"] - strike) * opt["put_options"]["market_data"]["oi"]
             if pain_at_strike < min_pain:
                 min_pain = pain_at_strike
                 max_pain_strike = strike
@@ -407,7 +405,7 @@ def calculate_volatility(config, seller_avg_iv):
 
 def calculate_iv_skew_slope(full_chain_df):
     try:
-        if full_chain_df.empty:
+        if full_chain_df.empty or len(full_chain_df) < 2:
             return 0
         slope, _, _, _, _ = linregress(full_chain_df["Strike"], full_chain_df["IV Skew"])
         return round(slope, 4)
@@ -424,16 +422,17 @@ def calculate_regime(atm_iv, ivp, realized_vol, garch_vol, straddle_price, spot_
     regime_score += 10 if vix > 20 else -10 if vix < 10 else 0
     regime_score += 5 if pcr > 1.2 else -5 if pcr < 0.8 else 0
     regime_score += 5 if abs(iv_skew_slope) > 0.001 else 0
-    regime_score += 10 if expected_move > 0.05 else -10 if expected_move < 0.02 else 0
+    regime_score += 10 if expected_move > 1.5 else -10 if expected_move < 0.5 else 0 # Adjusted thresholds
     regime_score += 5 if garch_vol > realized_vol * 1.2 else -5 if garch_vol < realized_vol * 0.8 else 0
+
     if regime_score > 20:
-        return regime_score, ":fire: High Vol Trend", "Market in high volatility — ideal for premium selling.", "High IVP, elevated VIX, and wide straddle suggest strong premium opportunities."
+        return regime_score, "🔥 High Vol Trend", "Market in high volatility — ideal for premium selling.", "High IVP, elevated VIX, and wide straddle suggest strong premium opportunities."
     elif regime_score > 10:
-        return regime_score, ":zap: Elevated Volatility", "Above-average volatility — favor range-bound strategies.", "Moderate IVP and IV-RV spread indicate potential for mean-reverting moves."
+        return regime_score, "⚡ Elevated Volatility", "Above-average volatility — favor range-bound strategies.", "Moderate IVP and IV-RV spread indicate potential for mean-reverting moves."
     elif regime_score > -10:
-        return regime_score, ":smile: Neutral Volatility", "Balanced market — flexible strategy selection.", "IV and RV aligned, with moderate PCR and skew."
+        return regime_score, "😊 Neutral Volatility", "Balanced market — flexible strategy selection.", "IV and RV aligned, with moderate PCR and skew."
     else:
-        return regime_score, ":chart_with_downwards_trend: Low Volatility", "Low volatility — cautious selling or long vega plays.", "Low IVP, tight straddle, and low VIX suggest limited movement."
+        return regime_score, "📉 Low Volatility", "Low volatility — cautious selling or long vega plays.", "Low IVP, tight straddle, and low VIX suggest limited movement."
 
 def suggest_strategy(regime_label, ivp, iv_minus_rv, days_to_expiry, event_df, expiry_date, straddle_price, spot_price):
     strategies = []
@@ -457,32 +456,37 @@ def suggest_strategy(regime_label, ivp, iv_minus_rv, days_to_expiry, event_df, e
             st.warning(f":warning: Error processing event row: {row}. Error: {e}")
             continue
     if high_impact_event_near:
-        event_warning = f":warning: High-impact event within {event_window} days of expiry. Prefer defined-risk strategies."
+        event_warning = f"⚠️ High-impact event within {event_window} days of expiry. Prefer defined-risk strategies."
     if event_impact_score > 0:
         rationale.append(f"High-impact events with significant forecast deviations ({event_impact_score} events).")
+
     expected_move_pct = (straddle_price / spot_price) * 100
-    if regime_label == ":fire: High Vol Trend":
-        strategies = ["Iron Fly", "Wide Strangle"]
+
+    if "High Vol" in regime_label:
+        strategies = ["Iron Condor", "Wide Strangle"]
         rationale.append("Strong IV premium — neutral strategies for premium capture.")
-    elif regime_label == ":zap: Elevated Volatility":
-        strategies = ["Iron Condor", "Jade Lizard"]
+    elif "Elevated" in regime_label:
+        strategies = ["Iron Fly", "Jade Lizard"]
         rationale.append("Volatility above average — range-bound strategies offer favorable reward-risk.")
-    elif regime_label == ":smile: Neutral Volatility":
+    elif "Neutral" in regime_label:
         if days_to_expiry >= 3:
             strategies = ["Jade Lizard", "Bull Put Spread"]
             rationale.append("Market balanced — slight directional bias strategies offer edge.")
         else:
-            strategies = ["Iron Fly"]
-            rationale.append("Tight expiry — quick theta-based capture via short Iron Fly.")
-    elif regime_label == ":chart_with_downwards_trend: Low Volatility":
+            strategies = ["Iron Fly", "ATM Strangle"]
+            rationale.append("Tight expiry — quick theta-based capture.")
+    elif "Low Vol" in regime_label:
         if days_to_expiry > 7:
             strategies = ["Straddle", "Calendar Spread"]
             rationale.append("Low IV with longer expiry — benefit from potential IV increase.")
         else:
             strategies = ["Straddle", "ATM Strangle"]
             rationale.append("Low IV — premium collection favorable but monitor for breakout risk.")
-    if event_impact_score > 0 and not high_impact_event_near:
-        strategies = [s for s in strategies if "Iron" in s or "Lizard" in s or "Spread" in s]
+
+    if event_impact_score > 0 or high_impact_event_near:
+        strategies = [s for s in strategies if "Iron" in s or "Lizard" in s or "Spread" in s or "Condor" in s]
+        rationale.append("Defined-risk strategies are favored due to upcoming events.")
+
     if ivp > 85 and iv_minus_rv > 5:
         rationale.append(f"Volatility overpriced (IVP: {ivp}%, IV-RV: {iv_minus_rv}%) — ideal for selling premium.")
     elif ivp < 30:
@@ -511,10 +515,11 @@ def get_funds_and_margin(config):
 
 def calculate_sharpe_ratio():
     try:
+        # Placeholder for actual portfolio returns
         daily_returns = np.random.normal(0.001, 0.01, 252)
         annual_return = np.mean(daily_returns) * 252
         annual_volatility = np.std(daily_returns) * np.sqrt(252)
-        sharpe_ratio = (annual_return - 0.06 / 252) / annual_volatility
+        sharpe_ratio = (annual_return - 0.06) / annual_volatility # Assuming 6% risk-free rate
         return round(sharpe_ratio, 2)
     except Exception as e:
         st.warning(f":warning: Exception in calculate_sharpe_ratio: {e}")
@@ -529,33 +534,43 @@ def calculate_strategy_premium(orders, lot_size):
             total_premium += price * qty
         else:
             total_premium -= price * qty
-    premium_per_lot = total_premium / lot_size
+    premium_per_lot = total_premium / (lot_size * len(orders) / 4) # Rough estimate
     return premium_per_lot, total_premium
 
 def calculate_strategy_margin(config, strategy_details):
     try:
-        instruments = [
-            {
-                "instrument_key": order["instrument_key"],
+        instruments = []
+        for order in strategy_details["orders"]:
+            instruments.append({
+                "instrument_token": order["instrument_key"],
                 "quantity": abs(order["quantity"]),
                 "transaction_type": order["transaction_type"],
                 "product": "D"
-            }
-            for order in strategy_details["orders"]
-        ]
-        url = f"{config['base_url']}/charges/margin"
-        res = requests.post(url, headers=config['headers'], json={"instruments": instruments})
+            })
+        if not instruments:
+            return 0
+            
+        url = f"{config['base_url']}/charges/brokerage" # Using brokerage endpoint which also returns margin
+        payload = {
+            "instrument": instruments,
+            "order_type": "MARKET",
+            "product": "D",
+            "transaction_type": "SELL", # This is a placeholder; API calculates for the basket
+            "quantity": config['lot_size']
+        }
+        res = requests.post(url, headers=config['headers'], json=payload)
+        
         if res.status_code == 200:
             data = res.json().get("data", {})
-            total_margin = 0
-            if isinstance(data, list):
-                total_margin = sum(item.get("total_margin", 0) for item in data)
-            elif isinstance(data, dict):
-                margins = data.get("margins", [])
-                if isinstance(margins, list):
-                    total_margin = sum(item.get("total_margin", 0)) for їй
-
-        return round(total_margin, 2)
+            return round(data.get("required_margin", {}).get("total", 0), 2)
+        
+        # Fallback to older margin endpoint if brokerage fails
+        url_margin = f"{config['base_url']}/charges/margin"
+        res_margin = requests.post(url_margin, headers=config['headers'], json={"instruments": instruments})
+        if res_margin.status_code == 200:
+            data_margin = res_margin.json().get("data", {})
+            return round(data_margin.get("required_margin", 0), 2)
+            
         st.warning(f":warning: Failed to calculate margin: {res.status_code} - {res.text}")
         return 0
     except Exception as e:
@@ -564,19 +579,19 @@ def calculate_strategy_margin(config, strategy_details):
 
 def place_multi_leg_orders(config, orders):
     try:
+        # Buy legs first to get margin benefit
         sorted_orders = sorted(orders, key=lambda x: 0 if x["transaction_type"] == "BUY" else 1)
         payload = []
         for idx, order in enumerate(sorted_orders):
-            correlation_id = f"s{idx}_{int(time()) % 1000000}"  # Max 20 chars
+            correlation_id = f"volg{idx}{int(time() % 100000)}"
             payload.append({
                 "quantity": abs(order["quantity"]),
                 "product": "D",
                 "validity": "DAY",
-                "price": 0 if order["order_type"] == "MARKET" else order.get("current_price", 0),  # Fix: Set price to 0 for MARKET orders
-                "tag": f"{order['instrument_key']}_leg_{idx}",
-                "slice": False,
+                "price": 0, # Fix: Set to 0 for MARKET orders
+                "tag": f"volguard_{order['instrument_key'].split('|')[1][:10]}",
                 "instrument_token": order["instrument_key"],
-                "order_type": order.get("order_type", "MARKET"),
+                "order_type": "MARKET",
                 "transaction_type": order["transaction_type"],
                 "disclosed_quantity": 0,
                 "trigger_price": 0,
@@ -584,7 +599,7 @@ def place_multi_leg_orders(config, orders):
                 "correlation_id": correlation_id
             })
         url = f"{config['base_url']}/order/multi/place"
-        res = requests.post(url, headers=config['headers'], json=payload)
+        res = requests.post(url, headers=config['headers'], json={"orders": payload})
         if res.status_code == 200:
             st.success(":white_check_mark: Multi-leg order placed successfully!")
             return True
@@ -597,29 +612,26 @@ def place_multi_leg_orders(config, orders):
 
 def create_gtt_order(config, instrument_token, trigger_price, transaction_type="SELL", tag="SL"):
     try:
-        url = f"{config['base_url'].replace('v2', 'v3')}/order/gtt/place"
+        url = f"{config['base_url']}/order/gtt/place"
         payload = {
-            "type": "SINGLE",
-            "quantity": config["lot_size"],
-            "product": "D",
-            "rules": [{
-                "strategy": "ENTRY",
-                "trigger_type": "ABOVE" if transaction_type == "SELL" else "BELOW",
-                "trigger_price": trigger_price
-            }],
             "instrument_token": instrument_token,
             "transaction_type": transaction_type,
-            "tag": tag
+            "quantity": config["lot_size"],
+            "order_type": "LIMIT",
+            "product": "D",
+            "price": trigger_price * 1.01, # Set a limit price slightly worse than trigger
+            "trigger_price": trigger_price,
+            "disclosed_quantity": 0
         }
         res = requests.post(url, headers=config['headers'], json=payload)
         if res.status_code == 200:
-            st.success(f":white_check_mark: GTT order placed for {instrument_token}")
+            st.success(f"✅ GTT order placed for {instrument_token}")
             return True
         else:
-            st.warning(f":warning: GTT failed: {res.status_code} - {res.text}")
+            st.warning(f"⚠️ GTT failed: {res.status_code} - {res.text}")
             return False
     except Exception as e:
-        st.error(f":warning: Error creating GTT: {e}")
+        st.error(f"⚠️ Error creating GTT: {e}")
         return False
 
 # --- Strategy Definitions ---
@@ -635,83 +647,81 @@ def get_strategy_details(strategy_name, option_chain, spot_price, config, ivp, l
         "ATM Strangle": _atm_strangle_calc
     }
     if strategy_name not in func_map:
-        st.warning(f":warning: Strategy {strategy_name} not supported.")
+        st.warning(f"⚠️ Strategy {strategy_name} not supported.")
         return None
     try:
-        detail = func_map[strategy_name](option_chain, spot_price, config, ivp, lots)
+        if strategy_name in ["Iron Fly", "Iron Condor"]:
+            detail = func_map[strategy_name](option_chain, spot_price, config, ivp, lots=lots)
+        else:
+            detail = func_map[strategy_name](option_chain, spot_price, config, lots=lots)
     except Exception as e:
-        st.warning(f":warning: Error calculating {strategy_name} details: {e}")
+        st.warning(f"⚠️ Error calculating {strategy_name} details: {e}")
         return None
-    if detail:
+
+    if detail and "orders" in detail and detail["orders"]:
         ltp_map = {}
         for opt in option_chain:
             if "call_options" in opt and "market_data" in opt["call_options"]:
                 ltp_map[opt["call_options"]["instrument_key"]] = opt["call_options"]["market_data"].get("ltp", 0)
             if "put_options" in opt and "market_data" in opt["put_options"]:
                 ltp_map[opt["put_options"]["instrument_key"]] = opt["put_options"]["market_data"].get("ltp", 0)
+
         updated_orders = []
-        prices = {}
+        premium = 0
         for order in detail["orders"]:
             key = order["instrument_key"]
             ltp = ltp_map.get(key, 0)
-            prices[key] = ltp
-            updated_orders.append({**order, "current_price": ltp})
-        detail["orders"] = updated_orders
-        detail["pricing"] = prices
-        premium = 0
-        for order in detail["orders"]:
-            price = order["current_price"]
             qty = order["quantity"]
+            updated_orders.append({**order, "current_price": ltp})
             if order["transaction_type"] == "SELL":
-                premium += price * qty
+                premium += ltp * qty
             else:
-                premium -= price * qty
-        detail["premium"] = premium / config["lot_size"]
+                premium -= ltp * qty
+        
+        detail["orders"] = updated_orders
+        detail["premium"] = premium / (lots * config["lot_size"])
         detail["premium_total"] = premium
-        wing_width = 0
-        if strategy_name == "Iron Fly":
-            wing_width = abs(detail["strikes"][0] - detail["strikes"][2])
-            detail["max_loss"] = (wing_width - detail["premium"]) * config["lot_size"] * lots if premium > 0 else float('inf')
-        elif strategy_name == "Iron Condor":
-            wing_width = abs(detail["strikes"][2] - detail["strikes"][0])
-            detail["max_loss"] = (wing_width - detail["premium"]) * config["lot_size"] * lots if premium > 0 else float('inf')
+
+        # Simplified Max Loss/Profit
+        if strategy_name in ["Iron Fly", "Iron Condor", "Bull Put Spread"]:
+            wing_width = abs(detail["strikes"][0] - detail["strikes"][1]) if len(detail["strikes"]) >= 2 else 50
+            detail["max_loss"] = (wing_width * lots * config["lot_size"]) - detail["premium_total"]
+            detail["max_profit"] = detail["premium_total"]
         elif strategy_name == "Jade Lizard":
             wing_width = abs(detail["strikes"][1] - detail["strikes"][2])
-            detail["max_loss"] = (wing_width - detail["premium"]) * config["lot_size"] * lots if premium > 0 else float('inf')
-        elif strategy_name == "Bull Put Spread":
-            wing_width = abs(detail["strikes"][0] - detail["strikes"][1])
-            detail["max_loss"] = (wing_width - detail["premium"]) * config["lot_size"] * lots if premium > 0 else float('inf')
+            detail["max_loss"] = (wing_width * lots * config["lot_size"]) - detail["premium_total"]
+            detail["max_profit"] = detail["premium_total"]
         elif strategy_name in ["Straddle", "Wide Strangle", "ATM Strangle"]:
             detail["max_loss"] = float("inf")
-        elif strategy_name == "Calendar Spread":
-            detail["max_loss"] = detail["premium"]
+            detail["max_profit"] = detail["premium_total"]
+        else: # Calendar, etc.
+            detail["max_loss"] = detail["premium_total"] if detail["premium_total"] < 0 else 0
             detail["max_profit"] = float("inf")
-        detail["max_profit"] = detail["premium_total"] if strategy_name != "Calendar Spread" else float("inf")
+
     return detail
 
 def find_option_by_strike(option_chain, strike, option_type):
     try:
         for opt in option_chain:
             if abs(opt["strike_price"] - strike) < 0.01:
-                if option_type == "CE" and "call_options" in opt:
-                    return opt["call_options"]
-                elif option_type == "PE" and "put_options" in opt:
-                    return opt["put_options"]
-        st.warning(f":warning: No option found for strike {strike} {option_type}")
+                key = "call_options" if option_type == "CE" else "put_options"
+                if key in opt:
+                    return opt[key]
+        st.warning(f"⚠️ No option found for strike {strike} {option_type}")
         return None
     except Exception as e:
-        st.warning(f":warning: Exception in find_option_by_strike: {e}")
+        st.warning(f"⚠️ Exception in find_option_by_strike: {e}")
         return None
 
 def get_dynamic_wing_distance(ivp, straddle_price):
     if ivp >= 80:
-        multiplier = 0.35
+        multiplier = 0.40
     elif ivp <= 20:
-        multiplier = 0.2
+        multiplier = 0.20
     else:
-        multiplier = 0.25
+        multiplier = 0.30
     raw_distance = straddle_price * multiplier
-    return int(round(raw_distance / 50.0)) * 50  # Round to nearest 50 for Nifty
+    return max(50, int(round(raw_distance / 50.0)) * 50)  # Round to nearest 50, min 50
 
 def _iron_fly_calc(option_chain, spot_price, config, ivp, lots):
     atm = min(option_chain, key=lambda x: abs(x["strike_price"] - spot_price))
@@ -723,7 +733,7 @@ def _iron_fly_calc(option_chain, spot_price, config, ivp, lots):
     ce_long_opt = find_option_by_strike(option_chain, strike + wing_distance, "CE")
     pe_long_opt = find_option_by_strike(option_chain, strike - wing_distance, "PE")
     if not all([ce_short_opt, pe_short_opt, ce_long_opt, pe_long_opt]):
-        st.error(":warning: Invalid options for Iron Fly.")
+        st.error("⚠️ Invalid options for Iron Fly.")
         return None
     orders = [
         {"instrument_key": ce_short_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "SELL"},
@@ -731,20 +741,21 @@ def _iron_fly_calc(option_chain, spot_price, config, ivp, lots):
         {"instrument_key": ce_long_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "BUY"},
         {"instrument_key": pe_long_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "BUY"}
     ]
-    return {"strategy": "Iron Fly", "strikes": [strike + wing_distance, strike, strike - wing_distance], "orders": orders}
+    return {"strategy": "Iron Fly", "strikes": [strike - wing_distance, strike, strike + wing_distance], "orders": orders}
 
 def _iron_condor_calc(option_chain, spot_price, config, ivp, lots):
     atm = min(option_chain, key=lambda x: abs(x["strike_price"] - spot_price))
     strike = atm["strike_price"]
     straddle_price = atm["call_options"]["market_data"]["ltp"] + atm["put_options"]["market_data"]["ltp"]
     short_wing_distance = get_dynamic_wing_distance(ivp, straddle_price)
-    long_wing_distance = int(round(short_wing_distance * 1.5 / 50)) * 50
+    long_wing_distance = short_wing_distance + 50 # Fixed 50 point wide condor
+    
     ce_short_opt = find_option_by_strike(option_chain, strike + short_wing_distance, "CE")
     pe_short_opt = find_option_by_strike(option_chain, strike - short_wing_distance, "PE")
     ce_long_opt = find_option_by_strike(option_chain, strike + long_wing_distance, "CE")
     pe_long_opt = find_option_by_strike(option_chain, strike - long_wing_distance, "PE")
     if not all([ce_short_opt, pe_short_opt, ce_long_opt, pe_long_opt]):
-        st.error(":warning: Invalid options for Iron Condor.")
+        st.error("⚠️ Invalid options for Iron Condor.")
         return None
     orders = [
         {"instrument_key": ce_short_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "SELL"},
@@ -752,18 +763,18 @@ def _iron_condor_calc(option_chain, spot_price, config, ivp, lots):
         {"instrument_key": ce_long_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "BUY"},
         {"instrument_key": pe_long_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "BUY"}
     ]
-    return {"strategy": "Iron Condor", "strikes": [strike + long_wing_distance, strike + short_wing_distance, strike - short_wing_distance, strike - long_wing_distance], "orders": orders}
+    return {"strategy": "Iron Condor", "strikes": [strike - long_wing_distance, strike - short_wing_distance, strike + short_wing_distance, strike + long_wing_distance], "orders": orders}
 
-def _jade_lizard_calc(option_chain, spot_price, config, ivp, lots):
+def _jade_lizard_calc(option_chain, spot_price, config, lots):
     atm = min(option_chain, key=lambda x: abs(x["strike_price"] - spot_price))
     call_strike = atm["strike_price"] + 50
     put_strike = atm["strike_price"] - 50
-    put_long_strike = atm["strike_price"] - 100
+    put_long_strike = put_strike - 50
     ce_short_opt = find_option_by_strike(option_chain, call_strike, "CE")
     pe_short_opt = find_option_by_strike(option_chain, put_strike, "PE")
     pe_long_opt = find_option_by_strike(option_chain, put_long_strike, "PE")
     if not all([ce_short_opt, pe_short_opt, pe_long_opt]):
-        st.error(":warning: Invalid options for Jade Lizard.")
+        st.error("⚠️ Invalid options for Jade Lizard.")
         return None
     orders = [
         {"instrument_key": ce_short_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "SELL"},
@@ -772,13 +783,13 @@ def _jade_lizard_calc(option_chain, spot_price, config, ivp, lots):
     ]
     return {"strategy": "Jade Lizard", "strikes": [call_strike, put_strike, put_long_strike], "orders": orders}
 
-def _straddle_calc(option_chain, spot_price, config, ivp, lots):
+def _straddle_calc(option_chain, spot_price, config, lots):
     atm = min(option_chain, key=lambda x: abs(x["strike_price"] - spot_price))
     strike = atm["strike_price"]
     ce_short_opt = find_option_by_strike(option_chain, strike, "CE")
     pe_short_opt = find_option_by_strike(option_chain, strike, "PE")
     if not all([ce_short_opt, pe_short_opt]):
-        st.error(":warning: Invalid options for Straddle.")
+        st.error("⚠️ Invalid options for Straddle.")
         return None
     orders = [
         {"instrument_key": ce_short_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "SELL"},
@@ -786,64 +797,63 @@ def _straddle_calc(option_chain, spot_price, config, ivp, lots):
     ]
     return {"strategy": "Straddle", "strikes": [strike, strike], "orders": orders}
 
-def _calendar_spread_calc(option_chain, spot_price, config, ivp, lots):
+def _calendar_spread_calc(option_chain, spot_price, config, lots):
+    # This requires multiple expiries, which is complex for this script. Placeholder.
+    st.warning("Calendar Spread requires multiple expiries and is not fully implemented.")
     atm = min(option_chain, key=lambda x: abs(x["strike_price"] - spot_price))
     strike = atm["strike_price"]
     near_leg = find_option_by_strike(option_chain, strike, "CE")
-    far_leg = find_option_by_strike(option_chain, strike, "CE")
+    # A true calendar would need to fetch a different expiry chain
+    far_leg = near_leg 
     if not all([near_leg, far_leg]):
-        st.error(":warning: Invalid options for Calendar Spread.")
         return None
-    orders = [
-        {"instrument_key": near_leg["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "SELL"},
-        {"instrument_key": far_leg["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "BUY"}
-    ]
-    return {"strategy": "Calendar Spread", "strikes": [strike, strike], "orders": orders}
+    return {"strategy": "Calendar Spread", "strikes": [strike, strike], "orders": []}
 
-def _bull_put_spread_calc(option_chain, spot_price, config, ivp, lots):
+
+def _bull_put_spread_calc(option_chain, spot_price, config, lots):
     atm = min(option_chain, key=lambda x: abs(x["strike_price"] - spot_price))
     short_strike = atm["strike_price"] - 50
-    long_strike = atm["strike_price"] - 100
+    long_strike = short_strike - 50
     pe_short_opt = find_option_by_strike(option_chain, short_strike, "PE")
     pe_long_opt = find_option_by_strike(option_chain, long_strike, "PE")
     if not all([pe_short_opt, pe_long_opt]):
-        st.error(":warning: Invalid options for Bull Put Spread.")
+        st.error("⚠️ Invalid options for Bull Put Spread.")
         return None
     orders = [
         {"instrument_key": pe_short_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "SELL"},
         {"instrument_key": pe_long_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "BUY"}
     ]
-    return {"strategy": "Bull Put Spread", "strikes": [short_strike, long_strike], "orders": orders}
+    return {"strategy": "Bull Put Spread", "strikes": [long_strike, short_strike], "orders": orders}
 
-def _wide_strangle_calc(option_chain, spot_price, config, ivp, lots):
+def _wide_strangle_calc(option_chain, spot_price, config, lots):
     atm = min(option_chain, key=lambda x: abs(x["strike_price"] - spot_price))
     call_strike = atm["strike_price"] + 100
     put_strike = atm["strike_price"] - 100
     ce_short_opt = find_option_by_strike(option_chain, call_strike, "CE")
     pe_short_opt = find_option_by_strike(option_chain, put_strike, "PE")
     if not all([ce_short_opt, pe_short_opt]):
-        st.error(":warning: Invalid options for Wide Strangle.")
+        st.error("⚠️ Invalid options for Wide Strangle.")
         return None
     orders = [
         {"instrument_key": ce_short_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "SELL"},
         {"instrument_key": pe_short_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "SELL"}
     ]
-    return {"strategy": "Wide Strangle", "strikes": [call_strike, put_strike], "orders": orders}
+    return {"strategy": "Wide Strangle", "strikes": [put_strike, call_strike], "orders": orders}
 
-def _atm_strangle_calc(option_chain, spot_price, config, ivp, lots):
+def _atm_strangle_calc(option_chain, spot_price, config, lots):
     atm = min(option_chain, key=lambda x: abs(x["strike_price"] - spot_price))
     call_strike = atm["strike_price"] + 50
     put_strike = atm["strike_price"] - 50
     ce_short_opt = find_option_by_strike(option_chain, call_strike, "CE")
     pe_short_opt = find_option_by_strike(option_chain, put_strike, "PE")
     if not all([ce_short_opt, pe_short_opt]):
-        st.error(":warning: Invalid options for ATM Strangle.")
+        st.error("⚠️ Invalid options for ATM Strangle.")
         return None
     orders = [
         {"instrument_key": ce_short_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "SELL"},
         {"instrument_key": pe_short_opt["instrument_key"], "quantity": lots * config["lot_size"], "transaction_type": "SELL"}
     ]
-    return {"strategy": "ATM Strangle", "strikes": [call_strike, put_strike], "orders": orders}
+    return {"strategy": "ATM Strangle", "strikes": [put_strike, call_strike], "orders": orders}
 
 def evaluate_full_risk(trades_df, config, regime_label, vix):
     try:
@@ -859,7 +869,7 @@ def evaluate_full_risk(trades_df, config, regime_label, vix):
             strategy_summary.append({
                 "Strategy": "None", "Capital Used": 0, "Cap Limit": total_funds, "% Used": 0,
                 "Potential Risk": 0, "Risk Limit": total_funds * 0.01,
-                "P&L": 0, "Vega": 0, "Risk OK?": ":white_check_mark:"
+                "P&L": 0, "Vega": 0, "Risk OK?": "✅"
             })
         else:
             for _, row in trades_df.iterrows():
@@ -870,7 +880,7 @@ def evaluate_full_risk(trades_df, config, regime_label, vix):
                 sl_hit = row["sl_hit"]
                 vega = row["vega"]
                 cfg = config['risk_config'].get(strat, {"capital_pct": 0.1, "risk_per_trade_pct": 0.01})
-                risk_factor = 1.2 if regime_label == ":fire: High Vol Trend" else 0.8 if regime_label == ":chart_with_downwards_trend: Low Volatility" else 1.0
+                risk_factor = 1.2 if "High Vol" in regime_label else 0.8 if "Low Vol" in regime_label else 1.0
                 max_cap = cfg["capital_pct"] * total_funds
                 max_risk = cfg["risk_per_trade_pct"] * max_cap * risk_factor
                 risk_ok = potential_risk <= max_risk
@@ -883,16 +893,16 @@ def evaluate_full_risk(trades_df, config, regime_label, vix):
                     "Risk Limit": round(max_risk),
                     "P&L": pnl,
                     "Vega": vega,
-                    "Risk OK?": ":white_check_mark:" if risk_ok else ":x:"
+                    "Risk OK?": "✅" if risk_ok else "❌"
                 })
                 total_cap_used += capital_used
                 total_risk_used += potential_risk
                 total_realized_pnl += pnl
                 total_vega += vega
                 if not risk_ok:
-                    flags.append(f":x: {strat} exceeded risk limit")
+                    flags.append(f"❌ {strat} exceeded risk limit")
                 if sl_hit:
-                    flags.append(f":warning: {strat} shows possible revenge trading")
+                    flags.append(f"⚠️ {strat} shows possible revenge trading")
         net_dd = -total_realized_pnl if total_realized_pnl < 0 else 0
         exposure_pct = round(total_cap_used / total_funds * 100, 2) if total_funds else 0
         risk_pct = round(total_risk_used / total_funds * 100, 2) if total_funds else 0
@@ -913,248 +923,155 @@ def evaluate_full_risk(trades_df, config, regime_label, vix):
         }
         return pd.DataFrame(strategy_summary), portfolio_summary
     except Exception as e:
-        st.error(f":warning: Exception in evaluate_full_risk: {e}")
-        return pd.DataFrame([{ "Strategy": "None", "Capital Used": 0, "Cap Limit": 2000000, "% Used": 0, "Potential Risk": 0, "Risk Limit": 20000, "P&L": 0, "Vega": 0, "Risk OK?": ":white_check_mark:" }]), {
-            "Total Funds": 2000000,
-            "Capital Deployed": 0,
-            "Exposure Percent": 0,
-            "Risk on Table": 0,
-            "Risk Percent": 0,
-            "Daily Risk Limit": 40000,
-            "Weekly Risk Limit": 60000,
-            "Realized P&L": 0,
-            "Drawdown ₹": 0,
-            "Drawdown Percent": 0,
-            "Max Drawdown Allowed": 40000,
-            "Flags": []
-        }
+        st.error(f"⚠️ Exception in evaluate_full_risk: {e}")
+        return pd.DataFrame([{ "Strategy": "None", "Capital Used": 0, "Cap Limit": 2000000, "% Used": 0, "Potential Risk": 0, "Risk Limit": 20000, "P&L": 0, "Vega": 0, "Risk OK?": "✅" }]), {}
 
 def fetch_trade_data(config, full_chain_df):
     try:
         url_positions = f"{config['base_url']}/portfolio/short-term-positions"
         res_positions = requests.get(url_positions, headers=config['headers'])
         positions = res_positions.json().get("data", []) if res_positions.status_code == 200 else []
-        trade_counts = {}
-        for pos in positions:
-            instrument = pos.get("instrument_token", "")
-            strategy = "Unknown"
-            if pos.get("product") == "D" and pos.get("quantity") < 0 and pos.get("average_price") > 0:
-                if "CE" in instrument or "PE" in instrument:
-                    strategy = "Straddle"
-                else:
-                    strategy = "Iron Condor"
-            trade_counts[strategy] = trade_counts.get(strategy, 0) + 1
+        
+        # Simple logic to group legs into strategies (placeholder)
         trades_df_list = []
         for pos in positions:
             instrument = pos.get("instrument_token", "")
+            # Basic strategy identification
             strategy = "Unknown"
-            if pos.get("product") == "D":
-                if pos.get("quantity") < 0 and pos.get("average_price") > 0:
-                    if "CE" in instrument or "PE" in instrument:
-                        strategy = "Straddle"
-                    else:
-                        strategy = "Iron Condor"
-            capital = pos["quantity"] * pos["average_price"]
+            if pos.get("product") == "I": # Assuming intraday for options strategies
+                 if "CE" in instrument or "PE" in instrument:
+                      strategy = "Options Leg" # Needs more logic to group into straddles, etc.
+
+            capital = abs(pos["quantity"] * pos["average_price"])
             trades_df_list.append({
                 "strategy": strategy,
-                "capital_used": abs(capital),
-                "potential_loss": abs(capital * 0.1),
-                "realized_pnl": pos["pnl"],
-                "trades_today": trade_counts.get(strategy, 0),
-                "sl_hit": pos["pnl"] < -abs(capital * 0.05),
+                "capital_used": capital,
+                "potential_loss": capital * 0.1, # Placeholder risk
+                "realized_pnl": pos.get("pnl", 0),
+                "trades_today": 1, # Placeholder
+                "sl_hit": pos.get("pnl", 0) < -abs(capital * 0.05),
                 "vega": full_chain_df["Total Vega"].mean() if not full_chain_df.empty else 0,
                 "instrument_token": instrument
             })
-        return pd.DataFrame(trades_df_list) if trades_df_list else pd.DataFrame()
+        return pd.DataFrame(trades_df_list) if trades_df_list else pd.DataFrame(columns=["strategy", "capital_used", "potential_loss", "realized_pnl", "trades_today", "sl_hit", "vega", "instrument_token"])
     except Exception as e:
-        st.error(f":warning: Exception in fetch_trade_data: {e}")
+        st.error(f"⚠️ Exception in fetch_trade_data: {e}")
         return pd.DataFrame()
 
 # --- Plotting Functions ---
 def plot_allocation_pie(strategy_df, config):
-    if strategy_df.empty:
-        st.info("No strategy data to plot allocation.")
+    if strategy_df.empty or strategy_df["Capital Used"].sum() == 0:
+        st.info("No capital deployed to plot allocation.")
         return
-    strategy_df = strategy_df[strategy_df["Capital Used"] > 0]
-    if strategy_df.empty:
-        st.info("All strategies have zero capital deployed.")
-        return
-    labels = strategy_df["Strategy"]
-    sizes = strategy_df["Capital Used"]
-    fig, ax = plt.subplots(figsize=(8, 8))
-    ax.pie(sizes, labels=labels, autopct='%1.1f%%', startangle=90, textprops={'color': 'white'})
+
+    fig, ax = plt.subplots(figsize=(8, 6), facecolor='#0E1117')
+    ax.pie(strategy_df["Capital Used"], labels=strategy_df["Strategy"], autopct='%1.1f%%', startangle=90, textprops={'color': 'white'})
     ax.set_title("Capital Allocation by Strategy", color="white")
-    fig.patch.set_facecolor('#0E1117')
-    ax.set_facecolor('#0E1117')
     st.pyplot(fig)
 
 def plot_drawdown_trend(portfolio_summary):
+    # Placeholder data for drawdown trend
     np.random.seed(42)
-    drawdowns = np.cumsum(np.random.normal(-1000, 5000, 30))
-    drawdowns = np.maximum(drawdowns, -portfolio_summary["Max Drawdown Allowed"])
-    fig, ax = plt.subplots(figsize=(10, 6))
-    ax.plot(range(30), drawdowns, color="#00BFFF")
-    ax.axhline(-portfolio_summary["Max Drawdown Allowed"], linestyle="--", color="red")
+    daily_pnl = np.random.normal(-500, 3000, 30)
+    cumulative_pnl = np.cumsum(daily_pnl)
+    drawdowns = cumulative_pnl - np.maximum.accumulate(cumulative_pnl)
+
+    fig, ax = plt.subplots(figsize=(10, 5), facecolor='#0E1117')
+    ax.plot(range(30), drawdowns, color="#00BFFF", fillstyle='full')
+    ax.fill_between(range(30), drawdowns, 0, color="#00BFFF", alpha=0.3)
+    ax.axhline(-portfolio_summary.get("Max Drawdown Allowed", 0), linestyle="--", color="red", label="Max Drawdown Limit")
     ax.set_title("Drawdown Trend (₹)", color="white")
-    ax.grid(True, linestyle=":", alpha=0.6)
-    fig.patch.set_facecolor('#0E1117')
+    ax.set_facecolor('#1A1C24')
     ax.tick_params(colors='white')
+    ax.grid(True, linestyle=":", alpha=0.4)
+    ax.legend(facecolor='#1A1C24', labelcolor='white')
     st.pyplot(fig)
 
 def plot_margin_gauge(funds_data):
+    if not funds_data or funds_data.get("total_funds", 0) == 0:
+        st.info("No funds data to display margin.")
+        return
+        
     used_pct = (funds_data["used_margin"] / funds_data["total_funds"] * 100) if funds_data["total_funds"] else 0
-    fig, ax = plt.subplots(figsize=(8, 4))
-    ax.barh(["Margin Utilization"], [used_pct], color="#00BFFF")
+    fig, ax = plt.subplots(figsize=(8, 2), facecolor='#0E1117')
+    ax.barh(["Margin"], [100], color='#2E2F38')
+    ax.barh(["Margin"], [used_pct], color="#00BFFF")
     ax.set_xlim(0, 100)
     ax.set_title("Margin Utilization (%)", color="white")
-    ax.tick_params(axis='x', colors='white')
-    ax.tick_params(axis='y', colors='white')
-    fig.patch.set_facecolor('#0E1117')
-    ax.set_facecolor('#0E1117')
+    ax.text(used_pct + 2, 0, f"{used_pct:.1f}%", va='center', color='white', weight='bold')
+    ax.axis('off')
     st.pyplot(fig)
 
 def plot_vol_comparison(seller, hv_7, garch_7d, xgb_vol):
-    fig, ax = plt.subplots(figsize=(10, 6))
+    fig, ax = plt.subplots(figsize=(10, 6), facecolor='#0E1117')
     vols = [seller['avg_iv'], hv_7, garch_7d, xgb_vol]
-    labels = ['ATM IV', 'Realized Vol', 'GARCH Vol', 'XGBoost Vol']
+    labels = ['ATM IV', 'Realized Vol (7D)', 'GARCH Forecast', 'XGBoost Forecast']
     colors = ['#00BFFF', '#FF6347', '#32CD32', '#FFD700']
-    ax.bar(labels, vols, color=colors)
+    bars = ax.bar(labels, vols, color=colors)
     ax.set_title("Volatility Comparison (%)", color="white")
     ax.set_ylabel("Annualized Volatility (%)", color="white")
-    ax.tick_params(axis='x', colors='white', rotation=45)
+    ax.tick_params(axis='x', colors='white', rotation=25)
     ax.tick_params(axis='y', colors='white')
-    ax.grid(True, linestyle=':', alpha=0.6)
-    fig.patch.set_facecolor('#0E1117')
-    st.pyplot(fig)
-
-def plot_greeks_separately(df):
-    if df.empty:
-        st.info("No option chain data to plot.")
-        return
-    fig, axs = plt.subplots(2, 2, figsize=(14, 10))
-    
-    axs[0][0].bar(df["Strike"], df["Call IV"], label="Call IV", color="#1f77b4")
-    axs[0][0].bar(df["Strike"], df["Put IV"], alpha=0.6, label="Put IV", color="#ff7f0e")
-    axs[0][0].legend()
-    axs[0][0].set_title("Call vs Put IV")
-    
-    axs[0][1].bar(df["Strike"], df["Total Theta"], color="#2ca02c")
-    axs[0][1].set_title("Total Theta")
-    
-    axs[1][0].bar(df["Strike"], df["Total Vega"], color="#d62728")
-    axs[1][0].set_title("Total Vega")
-    
-    axs[1][1].bar(df["Strike"], df["Straddle Price"], color="#9467bd")
-    axs[1][1].set_title("Straddle Price")
-
-    for ax in axs.flatten():
-        ax.grid(True, linestyle="--", alpha=0.3)
-        ax.tick_params(axis='x', colors='white')
-        ax.tick_params(axis='y', colors='white')
-        ax.set_facecolor('#0E1117')
-    fig.patch.set_facecolor('#0E1117')
-    st.pyplot(fig)
-
-def plot_payoff(orders, spot_price, wing_width):
-    prices = np.arange(spot_price - wing_width * 2, spot_price + wing_width * 2, 10)
-    payoff = np.zeros_like(prices)
-    for order in orders:
-        strike = int(order["instrument_key"].split("_")[-1])
-        price = order.get("current_price", 0)
-        qty = order["quantity"]
-        mult = 1 if order["transaction_type"] == "SELL" else -1
-        if "CE" in order["instrument_key"]:
-            payoff += mult * qty * np.maximum(prices - strike, 0) - mult * qty * price
-        elif "PE" in order["instrument_key"]:
-            payoff += mult * qty * np.maximum(strike - prices, 0) - mult * qty * price
-    fig, ax = plt.subplots(figsize=(10, 4))
-    ax.plot(prices, payoff, label="Payoff", color="#00BFFF")
-    ax.axhline(0, linestyle="--", color="gray")
-    ax.set_title("Strategy Payoff")
-    ax.set_xlabel("Underlying Price")
-    ax.set_ylabel("P&L")
+    ax.grid(True, linestyle=':', alpha=0.4)
+    ax.set_facecolor('#1A1C24')
+    for bar in bars:
+        yval = bar.get_height()
+        ax.text(bar.get_x() + bar.get_width()/2.0, yval + 0.5, f'{yval:.2f}', ha='center', va='bottom', color='white')
     st.pyplot(fig)
 
 # --- Streamlit UI Setup ---
-st.set_page_config(page_title="VolGuard Pro", layout="wide", initial_sidebar_state="expanded")
-st_autorefresh(interval=2 * 60 * 1000, key="refresh")
-st.info("⏳ Auto-refreshing every 2 minutes to fetch updated market data.")
+st.set_page_config(page_title="VolGuard - Trading Copilot", layout="wide", initial_sidebar_state="expanded")
+st_autorefresh(interval=5 * 60 * 1000, key="refresh") # 5 min refresh
 st.markdown("""
 <style>
 .main { background-color: #0E1117; color: white; }
 .metric-box { 
     background-color: #1A1C24; 
-    padding: 20px; 
-    border-radius: 12px; 
-    box-shadow: 0 0 8px rgba(0,0,0,0.3); 
-    margin-bottom: 10px; 
+    padding: 1rem; 
+    border-radius: 0.75rem; 
+    margin-bottom: 1rem; 
+    border: 1px solid #2E2F38;
 }
-.metric-box h3 { 
-    color: #00BFFF; 
-    font-size: 1em; 
-    margin: 0 0 10px 0; 
-}
-.metric-box h4 { 
-    color: #00BFFF; 
-    font-size: 0.9em; 
-    margin: 0 0 5px 0; 
-}
-.metric-box .value { 
-    font-size: 2rem; 
-    font-weight: bold; 
-    color: white; 
-}
-/* Sidebar styling */
-section[data-testid="stSidebar"] > div:first-child {
+.metric-box h3 { color: #6495ED; font-size: 1em; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.5px; }
+.metric-box .value { font-size: 1.8em; font-weight: bold; color: #00BFFF; }
+.stDataFrame { border: 1px solid #2E2F38; }
+.stButton>button { border-radius: 0.5rem; }
+section[data-testid="stSidebar"] {
     background-color: #1A1C24;
-    padding: 1.5rem;
 }
-section[data-testid="stSidebar"] .stTextInput > div > div > input {
+section[data-testid="stSidebar"] .stTextInput > div > div > input,
+section[data-testid="stSidebar"] .stSelectbox > div > div {
     background-color: #2E2F38;
     color: white;
     border: 1px solid #00BFFF;
 }
-section[data-testid="stSidebar"] .stButton > button {
-    background-color: #00BFFF;
-    color: white;
-    border-radius: 0.5rem;
-}
-section[data-testid="stSidebar"] .stRadio > div {
-    background-color: #2E2F38;
-    border-radius: 0.5rem;
-    padding: 0.5rem;
-}
-section[data-testid="stSidebar"] label {
-    color: white !important;
-}
 </style>""", unsafe_allow_html=True)
 
-# Sidebar login/logout
-st.sidebar.markdown("""
-🚀 **VolGuard**
-Your Options Copilot
-""")
-if 'access_token' not in st.session_state:
-    st.session_state.access_token = ""
-if 'logged_in' not in st.session_state:
-    st.session_state.logged_in = False
+# Sidebar
+st.sidebar.markdown("## 🚀 VolGuard Pro")
+st.sidebar.markdown("Your Options Trading Copilot")
+
 access_token = st.sidebar.text_input("Enter Upstox Access Token", type="password", value=st.session_state.access_token)
+
 if st.sidebar.button("Login"):
     if access_token:
-        config = get_config(access_token, expiry_type)
-        test_url = f"{config['base_url']}/user/profile"
+        # Simple validation by trying to get profile
+        headers = {"accept": "application/json", "Api-Version": "2.0", "Authorization": f"Bearer {access_token}"}
+        test_url = "https://api.upstox.com/v2/user/profile"
         try:
-            res = requests.get(test_url, headers=config['headers'])
+            res = requests.get(test_url, headers=headers)
             if res.status_code == 200:
                 st.session_state.access_token = access_token
                 st.session_state.logged_in = True
-                st.sidebar.success(":white_check_mark: Logged in successfully!")
+                st.sidebar.success("✅ Logged in successfully!")
+                st.rerun()
             else:
-                st.sidebar.error(f":x: Invalid token: {res.status_code} - {res.text}")
+                st.sidebar.error(f"❌ Invalid token or API error.")
         except Exception as e:
-            st.sidebar.error(f":warning: Error validating token: {e}")
+            st.sidebar.error(f"⚠️ Error validating token: {e}")
     else:
-        st.sidebar.error(":x: Please enter an access token.")
+        st.sidebar.error("❌ Please enter an access token.")
+
 if st.session_state.logged_in and st.sidebar.button("Logout"):
     st.session_state.logged_in = False
     st.session_state.access_token = ""
@@ -1162,278 +1079,253 @@ if st.session_state.logged_in and st.sidebar.button("Logout"):
     st.rerun()
 
 # Main App Logic
-if st.session_state.logged_in and access_token:
+if st.session_state.logged_in:
+    # Moved expiry selector here to fix duplicate key error
+    expiry_type = st.sidebar.radio("📅 Expiry Type", ["Weekly", "Monthly"], key="expiry_type_selector", horizontal=True)
+    
     config = get_config(st.session_state.access_token, expiry_type)
-    config['total_funds'] = get_funds_and_margin(config)['total_funds']
-
-    @st.cache_data(show_spinner="Analyzing market data...")
-    def load_all_data(config):
-        xgb_model = load_xgboost_model()
-        option_chain = fetch_option_chain(config)
+    
+    @st.cache_data(show_spinner="Analyzing market data...", ttl=120)
+    def load_all_data(_config):
+        option_chain = fetch_option_chain(_config)
         if not option_chain:
-            st.error(":x: Failed to fetch option chain data.")
-            return tuple([None]*27)
-        spot_price = option_chain[0]["underlying_spot_price"]
-        vix, nifty = get_indices_quotes(config)
-        if not vix or not nifty:
-            st.error(":x: Failed to fetch India VIX or Nifty 50 data.")
-            return tuple([None]*27)
+            return (None,) * 22 # Return tuple of Nones
+        
+        spot_price = option_chain[0].get("underlying_spot_price")
+        vix, nifty = get_indices_quotes(_config)
+        if not all([spot_price, vix, nifty]):
+            st.error("❌ Failed to fetch critical market data (Spot, VIX).")
+            return (None,) * 22
+
         seller = extract_seller_metrics(option_chain, spot_price)
-        if not seller:
-            st.error(":x: Failed to extract seller metrics.")
-            return tuple([None]*27)
         full_chain_df = full_chain_table(option_chain, spot_price)
-        market = market_metrics(option_chain, config['expiry_date'])
-        ivp = load_ivp(config, seller["avg_iv"])
-        hv_7, garch_7d, iv_rv_spread = calculate_volatility(config, seller["avg_iv"])
-        xgb_vol = predict_xgboost_volatility(xgb_model, seller["avg_iv"], hv_7, ivp, market["pcr"], vix, market["days_to_expiry"], garch_7d)
+        market = market_metrics(option_chain, _config['expiry_date'])
+        ivp = load_ivp(_config, seller.get("avg_iv", 0))
+        hv_7, garch_7d, iv_rv_spread = calculate_volatility(_config, seller.get("avg_iv", 0))
+        
+        xgb_model = load_xgboost_model()
+        xgb_vol = predict_xgboost_volatility(xgb_model, seller.get("avg_iv", 0), hv_7, ivp, market.get("pcr", 0), vix, market.get("days_to_expiry", 0), garch_7d)
+        
         iv_skew_slope = calculate_iv_skew_slope(full_chain_df)
         regime_score, regime, regime_note, regime_explanation = calculate_regime(
-            seller["avg_iv"], ivp, hv_7, garch_7d, seller["straddle_price"], spot_price, market["pcr"], vix, iv_skew_slope)
-        event_df = load_upcoming_events(config)
+            seller.get("avg_iv", 0), ivp, hv_7, garch_7d, seller.get("straddle_price", 0), spot_price, market.get("pcr", 0), vix, iv_skew_slope)
+        
+        event_df = load_upcoming_events(_config)
         strategies, strategy_rationale, event_warning = suggest_strategy(
-            regime, ivp, iv_rv_spread, market["days_to_expiry"], event_df, config['expiry_date'], seller["straddle_price"], spot_price)
-        strategy_details = [detail for strat in strategies if (detail := get_strategy_details(strat, option_chain, spot_price, config, ivp, lots=1)) is not None]
-        trades_df = fetch_trade_data(config, full_chain_df)
-        strategy_df, portfolio_summary = evaluate_full_risk(trades_df, config, regime, vix)
-        funds_data = get_funds_and_margin(config)
+            regime, ivp, iv_rv_spread, market.get("days_to_expiry", 0), event_df, _config['expiry_date'], seller.get("straddle_price", 0), spot_price)
+        
+        # Pass ivp to get_strategy_details
+        strategy_details = [detail for strat in strategies if (detail := get_strategy_details(strat, option_chain, spot_price, _config, ivp, lots=1)) is not None]
+        
+        funds_data = get_funds_and_margin(_config)
+        _config['total_funds'] = funds_data.get('total_funds', _config['total_funds'])
+        
+        trades_df = fetch_trade_data(_config, full_chain_df)
+        strategy_df, portfolio_summary = evaluate_full_risk(trades_df, _config, regime, vix)
         sharpe_ratio = calculate_sharpe_ratio()
-        return (option_chain, spot_price, vix, nifty, seller, full_chain_df, market, ivp, hv_7, garch_7d, xgb_vol, iv_rv_spread, iv_skew_slope, regime_score, regime, regime_note, regime_explanation, event_df, strategies, strategy_rationale, event_warning, strategy_details, trades_df, strategy_df, portfolio_summary, funds_data, sharpe_ratio)
+        
+        return (option_chain, spot_price, vix, nifty, seller, full_chain_df, market, ivp, hv_7, garch_7d, xgb_vol, iv_rv_spread, iv_skew_slope, regime_score, regime, regime_note, regime_explanation, event_df, strategies, strategy_rationale, event_warning, strategy_details, strategy_df, portfolio_summary, funds_data, sharpe_ratio)
 
-    (option_chain, spot_price, vix, nifty, seller, full_chain_df, market, ivp, hv_7, garch_7d, xgb_vol, iv_rv_spread, iv_skew_slope, regime_score, regime, regime_note, regime_explanation, event_df, strategies, strategy_rationale, event_warning, strategy_details, trades_df, strategy_df, portfolio_summary, funds_data, sharpe_ratio) = load_all_data(config)
-
-    if option_chain is None:
+    # Unpack all data
+    data_tuple = load_all_data(config)
+    if data_tuple[0] is None:
+        st.error("Dashboard loading failed. Please check token or API status.")
         st.stop()
+        
+    (option_chain, spot_price, vix, nifty, seller, full_chain_df, market, ivp, hv_7, garch_7d, xgb_vol, iv_rv_spread, iv_skew_slope, regime_score, regime, regime_note, regime_explanation, event_df, strategies, strategy_rationale, event_warning, strategy_details, strategy_df, portfolio_summary, funds_data, sharpe_ratio) = data_tuple
 
+    # Main Dashboard UI
     st.markdown("<h1 style='text-align: center;'>Market Insights Dashboard</h1>", unsafe_allow_html=True)
-    col1, col2, col3 = st.columns(3)
-    col1.metric("IV", f"{seller['avg_iv']:.2f}%")
-    col2.metric("IVP", f"{ivp}%")
-    col3.metric("Straddle", f"₹{seller['straddle_price']:.2f}")
+    st.info(f"⏳ Auto-refreshing every 5 minutes. Last refresh: {datetime.now().strftime('%H:%M:%S')}")
+    
     col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.markdown(f"<div class='metric-box'><h3>Nifty 50 Spot</h3><div class='value'>₹{nifty:.2f}</div></div>", unsafe_allow_html=True)
-    with col2:
-        st.markdown(f"<div class='metric-box'><h3>India VIX</h3><div class='value'>{vix:.2f}</div></div>", unsafe_allow_html=True)
-    with col3:
-        st.markdown(f"<div class='metric-box'><h3>ATM Strike</h3><div class='value'>{seller['strike']:.0f}</div></div>", unsafe_allow_html=True)
-    with col4:
-        st.markdown(f"<div class='metric-box'><h3>Straddle Price</h3><div class='value'>₹{seller['straddle_price']:.2f}</div></div>", unsafe_allow_html=True)
+    col1.markdown(f"<div class='metric-box'><h3>Nifty 50 Spot</h3><div class='value'>₹{nifty:.2f}</div></div>", unsafe_allow_html=True)
+    col2.markdown(f"<div class='metric-box'><h3>India VIX</h3><div class='value'>{vix:.2f}</div></div>", unsafe_allow_html=True)
+    col3.markdown(f"<div class='metric-box'><h3>ATM IV</h3><div class='value'>{seller['avg_iv']:.2f}%</div></div>", unsafe_allow_html=True)
+    col4.markdown(f"<div class='metric-box'><h3>IVP</h3><div class='value'>{ivp}%</div></div>", unsafe_allow_html=True)
+
     col5, col6, col7, col8 = st.columns(4)
-    with col5:
-        st.markdown(f"<div class='metric-box'><h3>ATM IV</h3><div class='value'>{seller['avg_iv']:.2f}%</div></div>", unsafe_allow_html=True)
-    with col6:
-        st.markdown(f"<div class='metric-box'><h3>IVP</h3><div class='value'>{ivp}%</div></div>", unsafe_allow_html=True)
-    with col7:
-        st.markdown(f"<div class='metric-box'><h3>Days to Expiry</h3><div class='value'>{market['days_to_expiry']}</div></div>", unsafe_allow_html=True)
-    with col8:
-        st.markdown(f"<div class='metric-box'><h3>PCR</h3><div class='value'>{market['pcr']:.2f}</div></div>", unsafe_allow_html=True)
+    col5.markdown(f"<div class='metric-box'><h3>Straddle Price</h3><div class='value'>₹{seller['straddle_price']:.2f}</div></div>", unsafe_allow_html=True)
+    col6.markdown(f"<div class='metric-box'><h3>PCR</h3><div class='value'>{market['pcr']:.2f}</div></div>", unsafe_allow_html=True)
+    col7.markdown(f"<div class='metric-box'><h3>Days to Expiry</h3><div class='value'>{market['days_to_expiry']}</div></div>", unsafe_allow_html=True)
+    col8.markdown(f"<div class='metric-box'><h3>Max Pain</h3><div class='value'>{market['max_pain']:.0f}</div></div>", unsafe_allow_html=True)
 
-    tabs = ["Dashboard", "Option Chain Analysis", "Strategy Suggestions", "Risk & Portfolio", "Manual Orders", "Logs & Journal"]
+    tabs = ["Dashboard", "Option Chain", "Strategy Hub", "Risk & Portfolio", "Manual Order", "Journal"]
     st.session_state.active_tab = st.sidebar.radio("Navigate", tabs, index=tabs.index(st.session_state.active_tab))
+    st.sidebar.markdown("---")
+    st.sidebar.info(f"Selected Expiry: **{config['expiry_date']}**")
 
-    # DASHBOARD TAB
+    # --- TAB: Dashboard ---
     if st.session_state.active_tab == "Dashboard":
         st.subheader("Volatility Landscape")
         plot_vol_comparison(seller, hv_7, garch_7d, xgb_vol)
-        st.markdown(f"<div class='metric-box'><h4>IV - RV Spread:</h4> {iv_rv_spread:+.2f}%</div>", unsafe_allow_html=True)
-        st.markdown(f"<div class='metric-box'><h4>IV Skew Slope:</h4> {iv_skew_slope:.4f}</div>", unsafe_allow_html=True)
-        st.markdown(f"<div class='metric-box'><h4>Current Expiry:</h4> {config['expiry_date']}</div>", unsafe_allow_html=True)
-        st.subheader("XGBoost Volatility Prediction Inputs")
-        xgb_inputs = pd.DataFrame({
-            "Feature": ["ATM_IV", "Realized_Vol", "IVP", "PCR", "VIX", "Days_to_Expiry", "GARCH_Predicted_Vol"],
-            "Value": [seller["avg_iv"], hv_7, ivp, market["pcr"], vix, market["days_to_expiry"], garch_7d]
-        })
-        st.dataframe(xgb_inputs.style.format({"Value": "{:.2f}"}).set_properties(**{"background-color": "#1A1C24", "color": "white"}), use_container_width=True)
-        st.subheader("Breakeven & Max Pain")
-        st.markdown(f"<div class='metric-box'><h4>Breakeven Range:</h4> {seller['strike'] - seller['straddle_price']:.0f} – {seller['strike'] + seller['straddle_price']:.0f}</div>", unsafe_allow_html=True)
-        st.markdown(f"<div class='metric-box'><h4>Max Pain:</h4> {market['max_pain']:.0f}</div>", unsafe_allow_html=True)
-        st.subheader("Greeks at ATM")
-        st.markdown(f"<div class='metric-box'><h4>Delta</h4>{seller['delta']:.4f}</div>", unsafe_allow_html=True)
-        st.markdown(f"<div class='metric-box'><h4>Theta</h4>₹{seller['theta']:.2f}</div>", unsafe_allow_html=True)
-        st.markdown(f"<div class='metric-box'><h4>Vega</h4>₹{seller['vega']:.2f}</div>", unsafe_allow_html=True)
-        st.markdown(f"<div class='metric-box'><h4>Gamma</h4>{seller['gamma']:.6f}</div>", unsafe_allow_html=True)
-        st.markdown(f"<div class='metric-box'><h4>POP</h4>{seller['pop']:.2f}%</div>", unsafe_allow_html=True)
-        st.subheader("Upcoming Events")
+        
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.markdown(f"<div class='metric-box'><h3>Breakeven Range</h3><div class='value' style='font-size: 1.4em;'>{seller['strike'] - seller['straddle_price']:.0f} – {seller['strike'] + seller['straddle_price']:.0f}</div></div>", unsafe_allow_html=True)
+        with c2:
+            st.markdown(f"<div class='metric-box'><h3>IV - RV Spread</h3><div class='value'>{iv_rv_spread:+.2f}%</div></div>", unsafe_allow_html=True)
+        with c3:
+            st.markdown(f"<div class='metric-box'><h3>IV Skew Slope</h3><div class='value'>{iv_skew_slope:.4f}</div></div>", unsafe_allow_html=True)
+
+        st.subheader("ATM Greeks Snapshot")
+        gc1, gc2, gc3, gc4, gc5 = st.columns(5)
+        gc1.metric("Delta", f"{seller['delta']:.3f}")
+        gc2.metric("Theta", f"₹{seller['theta']:.2f}")
+        gc3.metric("Vega", f"₹{seller['vega']:.2f}")
+        gc4.metric("Gamma", f"{seller['gamma']:.4f}")
+        gc5.metric("POP", f"{seller['pop']:.2f}%")
+        
+        st.subheader("Upcoming Events Before Expiry")
         if not event_df.empty:
             st.dataframe(event_df.style.set_properties(**{'background-color': '#1A1C24', 'color': 'white'}), use_container_width=True)
+        else:
+            st.info("No major upcoming events before expiry.")
+
+    # --- TAB: Option Chain ---
+    elif st.session_state.active_tab == "Option Chain":
+        st.subheader("📊 Interactive Option Chain")
+        st.dataframe(full_chain_df.style.set_properties(**{'background-color': '#1A1C24', 'color': 'white'}).format({
+            "Call IV": "{:.2f}", "Put IV": "{:.2f}", "IV Skew": "{:.2f}", 
+            "Total Theta": "{:.2f}", "Total Vega": "{:.2f}", "Straddle Price": "{:.2f}"
+        }), use_container_width=True)
+
+        st.subheader("📈 Visual Greeks Analysis")
+        fig, axs = plt.subplots(3, 1, figsize=(12, 15), facecolor='#0E1117')
+        
+        # Call vs Put IV
+        axs[0].bar(full_chain_df["Strike"], full_chain_df["Call IV"], color="#1f77b4", width=20, label="Call IV")
+        axs[0].bar(full_chain_df["Strike"], full_chain_df["Put IV"], color="#ff7f0e", width=20, alpha=0.7, label="Put IV")
+        axs[0].set_title("Call vs Put IV", color='white')
+        axs[0].legend()
+
+        # Total Theta
+        axs[1].bar(full_chain_df["Strike"], full_chain_df["Total Theta"], color="#2ca02c", width=20)
+        axs[1].set_title("Total Theta (Decay)", color='white')
+
+        # Total Vega
+        axs[2].bar(full_chain_df["Strike"], full_chain_df["Total Vega"], color="#d62728", width=20)
+        axs[2].set_title("Total Vega (Volatility Risk)", color='white')
+
+        for ax in axs:
+            ax.set_facecolor('#1A1C24')
+            ax.tick_params(colors='white')
+            ax.grid(True, linestyle=":", alpha=0.4)
+            ax.axvline(spot_price, color='cyan', linestyle='--', label='Spot Price')
+        
+        st.pyplot(fig)
+        
+    # --- TAB: Strategy Hub ---
+    elif st.session_state.active_tab == "Strategy Hub":
+        st.markdown(f"<div class='metric-box'><h3>Regime: {regime}</h3><p>Score: {regime_score:.2f} | {regime_note}<br><i>{regime_explanation}</i></p></div>", unsafe_allow_html=True)
+        st.subheader("💡 Recommended Strategies")
+        if strategies:
+            st.success(f"**Top Suggestions:** {', '.join(strategies)}")
+            st.info(f"**Rationale:** {strategy_rationale}")
             if event_warning:
                 st.warning(event_warning)
+            
+            for detail in strategy_details:
+                with st.expander(f"**{detail['strategy']}** - View Details & Trade"):
+                    order_df = pd.DataFrame(detail["orders"])
+                    st.dataframe(order_df[['instrument_key', 'transaction_type', 'quantity', 'current_price']].style.set_properties(**{'background-color': '#2E2F38', 'color': 'white'}), use_container_width=True)
+                    
+                    margin = calculate_strategy_margin(config, detail)
+                    sc1, sc2, sc3 = st.columns(3)
+                    sc1.metric("Est. Margin", f"₹{margin:,.2f}")
+                    sc2.metric("Max Profit", f"₹{detail.get('max_profit', 0):,.2f}")
+                    sc3.metric("Max Loss", f"₹{detail.get('max_loss', 0):,.2f}")
+
+                    lots = st.number_input(f"Lots for {detail['strategy']}", min_value=1, value=1, step=1, key=f"lots_{detail['strategy']}")
+                    if st.button(f"Place {detail['strategy']} Order", key=f"place_{detail['strategy']}"):
+                        final_detail = get_strategy_details(detail['strategy'], option_chain, spot_price, config, ivp, lots=lots)
+                        if final_detail:
+                            place_multi_leg_orders(config, final_detail["orders"])
         else:
-            st.info("No upcoming events before expiry.")
-
-    # OPTION CHAIN ANALYSIS TAB
-    elif st.session_state.active_tab == "Option Chain Analysis":
-        st.subheader("📊 Option Chain Analysis")
-
-        # Step 1: Let user override expiry
-        all_expiries = sorted(set(pd.to_datetime([c["expiry"] for c in option_chain])))
-        expiry_override = st.selectbox("Choose Expiry Date", [e.strftime("%Y-%m-%d") for e in all_expiries], index=0)
-        filtered_chain = [c for c in option_chain if c["expiry"][:10] == expiry_override]
-        chain_df = full_chain_table(filtered_chain, spot_price)
-
-        # Step 2: Plot greeks separately
-        if not chain_df.empty:
-            plot_greeks_separately(chain_df)
-
-        # Step 3: Show interactive filters for IV/OI
-        col1, col2 = st.columns(2)
-        with col1:
-            iv_min = st.slider("Min IV (either Call or Put)", 0.0, 100.0, 10.0)
-        with col2:
-            oi_min = st.slider("Min Total OI", 0, 1000000, 100000)
-
-        filtered_df = chain_df[(chain_df["Call IV"] >= iv_min) | (chain_df["Put IV"] >= iv_min)]
-        filtered_df = filtered_df[filtered_df["Total OI"] >= oi_min]
-
-        # Step 4: Display table with modern styling
-        if not filtered_df.empty:
-            styled_df = filtered_df.style.set_properties(**{
-                'background-color': '#1A1C24',
-                'color': 'white',
-                'border-color': 'gray'
-            })
-            st.dataframe(styled_df, use_container_width=True)
-
-            # Step 5: Display key rows as metric cards
-            st.subheader("Key Strikes")
-            for _, row in filtered_df.iterrows():
-                st.markdown(f"""
-                <div class='metric-box'>
-                    <h4>Strike: {row['Strike']}</h4>
-                    IV Skew: {row['IV Skew']:.2f} | Theta: {row['Total Theta']:.2f} | Vega: {row['Total Vega']:.2f}
-                </div>
-                """, unsafe_allow_html=True)
-
-        # Step 6: Download options
-        col1, col2 = st.columns(2)
-        with col1:
-            download_df(filtered_df, "option_chain.csv", "Download CSV")
-        with col2:
-            download_excel(filtered_df, "option_chain.xlsx", "Option Chain", "Download Excel")
-    # STRATEGY SUGGESTIONS TAB
-    elif st.session_state.active_tab == "Strategy Suggestions":
-        st.subheader("🔄 Strategy Suggestions")
-        st.markdown(f"<div class='metric-box'><h4>Volatility Regime:</h4> {regime} ({regime_score})</div>", unsafe_allow_html=True)
-        st.markdown(f"<div class='metric-box'><h4>Regime Note:</h4> {regime_note}</div>", unsafe_allow_html=True)
-        st.markdown(f"<div class='metric-box'><h4>Explanation:</h4> {regime_explanation}</div>", unsafe_allow_html=True)
-        if event_warning:
-            st.warning(event_warning)
-        st.markdown(f"<div class='metric-box'><h4>Strategy Rationale:</h4> {strategy_rationale}</div>", unsafe_allow_html=True)
-
-        st.subheader("Recommended Strategies")
-        for strat in strategies:
-            st.markdown(f"**{strat}**")
-            detail = next((d for d in strategy_details if d["strategy"] == strat), None)
-            if detail:
-                margin = calculate_strategy_margin(config, detail)
-                premium_per_lot, total_premium = calculate_strategy_premium(detail["orders"], config["lot_size"])
-                st.markdown(f"""
-                <div class='metric-box'>
-                    <h4>Details for {strat}</h4>
-                    Strikes: {', '.join(map(str, detail['strikes']))}<br>
-                    Premium per Lot: ₹{premium_per_lot:.2f}<br>
-                    Total Premium: ₹{total_premium:.2f}<br>
-                    Margin Required: ₹{margin:.2f}<br>
-                    Max Loss: ₹{detail.get('max_loss', 'N/A'):.2f}<br>
-                    Max Profit: ₹{detail.get('max_profit', 'N/A'):.2f}
-                </div>
-                """, unsafe_allow_html=True)
-                plot_payoff(detail["orders"], spot_price, max(detail["strikes"]) - min(detail["strikes"]))
-                lots = st.number_input(f"Number of Lots for {strat}", min_value=1, max_value=10, value=1, key=f"lots_{strat}")
-                if st.button(f"Place {strat} Order", key=f"order_{strat}"):
-                    detail_lots = get_strategy_details(strat, option_chain, spot_price, config, ivp, lots=lots)
-                    if detail_lots:
-                        if place_multi_leg_orders(config, detail_lots["orders"]):
-                            trade_data = {
-                                "strategy": strat,
-                                "instrument_token": ",".join(o["instrument_key"] for o in detail_lots["orders"]),
-                                "entry_price": detail_lots["premium"],
-                                "exit_price": 0,
-                                "quantity": lots * config["lot_size"],
-                                "realized_pnl": 0,
-                                "unrealized_pnl": 0,
-                                "regime_score": regime_score
-                            }
-                            log_trade(trade_data)
-    # RISK & PORTFOLIO TAB
+            st.info("No specific strategies recommended for the current market conditions.")
+            
+    # --- TAB: Risk & Portfolio ---
     elif st.session_state.active_tab == "Risk & Portfolio":
-        st.subheader("📈 Risk & Portfolio Overview")
-        st.markdown(f"<div class='metric-box'><h4>Total Funds:</h4> ₹{portfolio_summary['Total Funds']:.2f}</div>", unsafe_allow_html=True)
-        st.markdown(f"<div class='metric-box'><h4>Capital Deployed:</h4> ₹{portfolio_summary['Capital Deployed']:.2f} ({portfolio_summary['Exposure Percent']:.2f}%)</div>", unsafe_allow_html=True)
-        st.markdown(f"<div class='metric-box'><h4>Risk on Table:</h4> ₹{portfolio_summary['Risk on Table']:.2f} ({portfolio_summary['Risk Percent']:.2f}%)</div>", unsafe_allow_html=True)
-        st.markdown(f"<div class='metric-box'><h4>Realized P&L:</h4> ₹{portfolio_summary['Realized P&L']:.2f}</div>", unsafe_allow_html=True)
-        st.markdown(f"<div class='metric-box'><h4>Drawdown:</h4> ₹{portfolio_summary['Drawdown ₹']:.2f} ({portfolio_summary['Drawdown Percent']:.2f}%)</div>", unsafe_allow_html=True)
-        st.markdown(f"<div class='metric-box'><h4>Max Drawdown Allowed:</h4> ₹{portfolio_summary['Max Drawdown Allowed']:.2f}</div>", unsafe_allow_html=True)
-        st.markdown(f"<div class='metric-box'><h4>Sharpe Ratio:</h4> {sharpe_ratio:.2f}</div>", unsafe_allow_html=True)
-        if portfolio_summary["Flags"]:
-            st.warning("🚨 Risk Flags: " + "; ".join(portfolio_summary["Flags"]))
-
-        st.subheader("Strategy Allocation")
-        plot_allocation_pie(strategy_df, config)
-        st.dataframe(strategy_df.style.set_properties(**{'background-color': '#1A1C24', 'color': 'white'}), use_container_width=True)
-        plot_drawdown_trend(portfolio_summary)
+        st.subheader("🛡️ Risk & Portfolio Overview")
+        pc1, pc2, pc3, pc4 = st.columns(4)
+        pc1.metric("Total Funds", f"₹{funds_data.get('total_funds', 0):,.2f}")
+        pc2.metric("Available Margin", f"₹{funds_data.get('available_margin', 0):,.2f}")
+        pc3.metric("Used Margin", f"₹{funds_data.get('used_margin', 0):,.2f}")
+        pc4.metric("Sharpe Ratio (mock)", f"{sharpe_ratio:.2f}")
+        
         plot_margin_gauge(funds_data)
-    # MANUAL ORDERS TAB
-    elif st.session_state.active_tab == "Manual Orders":
-        st.subheader("🛠️ Manual Order Placement")
-        instrument_key = st.text_input("Instrument Key (e.g., NSE_FO|123456)")
-        quantity = st.number_input("Quantity", min_value=1, value=config["lot_size"])
-        transaction_type = st.selectbox("Transaction Type", ["BUY", "SELL"])
-        order_type = st.selectbox("Order Type", ["MARKET", "LIMIT"])
-        price = st.number_input("Price (0 for MARKET)", min_value=0.0, value=0.0)
-        trigger_price = st.number_input("GTT Trigger Price", min_value=0.0, value=0.0)
-        if st.button("Place Manual Order"):
-            order = [{
-                "instrument_key": instrument_key,
-                "quantity": quantity,
-                "transaction_type": transaction_type,
-                "order_type": order_type,
-                "current_price": price
-            }]
-            if place_multi_leg_orders(config, order):
-                if trigger_price > 0:
-                    create_gtt_order(config, instrument_key, trigger_price, "SELL" if transaction_type == "BUY" else "BUY")
-                trade_data = {
-                    "strategy": "Manual",
-                    "instrument_token": instrument_key,
-                    "entry_price": price,
-                    "exit_price": 0,
-                    "quantity": quantity,
-                    "realized_pnl": 0,
-                    "unrealized_pnl": 0,
-                    "regime_score": regime_score
-                }
-                log_trade(trade_data)
-
-     # LOGS & JOURNAL TAB
-    elif st.session_state.active_tab == "Logs & Journal":
-        st.subheader("📝 Trade Logs")
-        trades_df_display = trades_to_dataframe()
-        if not trades_df_display.empty:
-            st.dataframe(trades_df_display.style.set_properties(**{'background-color': '#1A1C24', 'color': 'white'}), use_container_width=True)
-            download_df(trades_df_display, "trade_logs.csv", "Download Trade Logs")
+        
+        st.subheader("Strategy Risk Summary")
+        if not strategy_df.empty:
+            st.dataframe(strategy_df.style.set_properties(**{'background-color': '#1A1C24', 'color': 'white'}), use_container_width=True)
+            if portfolio_summary.get("Flags"):
+                st.warning(f"⚠️ Risk Alerts: {' | '.join(portfolio_summary['Flags'])}")
         else:
-            st.info("No trades logged.")
+            st.info("No active strategies or positions found.")
+            
+        c1, c2 = st.columns(2)
+        with c1:
+            st.subheader("Capital Allocation")
+            plot_allocation_pie(strategy_df, config)
+        with c2:
+            st.subheader("Drawdown Trend")
+            plot_drawdown_trend(portfolio_summary)
 
-        st.subheader("📓 Trading Journal")
-        journal_title = st.text_input("Journal Entry Title")
-        journal_content = st.text_area("Journal Entry Content")
-        journal_mood = st.selectbox("Mood", ["Positive", "Neutral", "Negative"])
-        journal_tags = st.text_input("Tags (comma-separated)")
-        if st.button("Add Journal Entry"):
-            if journal_title and journal_content:
-                entry_data = {
-                    "title": journal_title,
-                    "content": journal_content,
-                    "mood": journal_mood,
-                    "tags": journal_tags
-                }
-                if add_journal_entry(entry_data):
-                    st.success(":white_check_mark: Journal entry added!")
-        journal_df = journals_to_dataframe()
-        if not journal_df.empty:
-            st.dataframe(journal_df.style.set_properties(**{'background-color': '#1A1C24', 'color': 'white'}), use_container_width=True)
-            download_df(journal_df, "journal_entries.csv", "Download Journal Entries")
+    # --- TAB: Manual Order ---
+    elif st.session_state.active_tab == "Manual Order":
+        st.subheader("📥 Manual Multi-Leg Order")
+        selected_strategy = st.selectbox("Select Strategy Template", all_strategies, key="manual_strategy")
+        lots = st.number_input("Number of Lots", min_value=1, value=1, step=1, key="manual_lots")
+        
+        detail = get_strategy_details(selected_strategy, option_chain, spot_price, config, ivp, lots=lots)
+
+        if detail:
+            st.write("📋 Order Legs")
+            order_df = pd.DataFrame(detail["orders"])
+            st.dataframe(order_df[['instrument_key', 'transaction_type', 'quantity', 'current_price']].style.set_properties(**{'background-color': '#1A1C24', 'color': 'white'}), use_container_width=True)
+
+            margin = calculate_strategy_margin(config, detail)
+            mc1, mc2, mc3 = st.columns(3)
+            mc1.metric("Est. Margin", f"₹{margin * lots:,.2f}")
+            mc2.metric("Total Premium", f"₹{detail['premium_total']:,.2f}")
+            mc3.metric("Max Loss", f"₹{detail.get('max_loss', 0):,.2f}")
+
+            if st.button("🚀 Place Manual Order"):
+                place_multi_leg_orders(config, detail["orders"])
         else:
-            st.info("No journal entries.")   
+            st.error("❌ Could not generate details for the selected strategy.")
+            
+    # --- TAB: Journal ---
+    elif st.session_state.active_tab == "Journal":
+        st.header("📁 Logs & Journal")
+        tab_logs, tab_journal = st.tabs(["Trade Logs", "Trading Journal"])
+        with tab_logs:
+            st.subheader("📊 Recent Trades")
+            trades_df = trades_to_dataframe()
+            if not trades_df.empty:
+                st.dataframe(trades_df.style.set_properties(**{"background-color": "#1A1C24", "color": "white"}), use_container_width=True)
+                download_df(trades_df, "trades.csv")
+            else:
+                st.info("No trade logs found.")
+        with tab_journal:
+            st.subheader("📝 Add Journal Entry")
+            with st.form("journal_form"):
+                entry_title = st.text_input("Title")
+                entry_text = st.text_area("Observations & Decisions")
+                mood = st.selectbox("Mood", ["😄 Happy", "😌 Calm", "😰 Stressed", "😤 Angry", "😴 Tired"])
+                tags = st.text_input("Tags (comma-separated)", "e.g., Nifty, HighIV, FED_event")
+                if st.form_submit_button("Save Entry"):
+                    if add_journal_entry({"title": entry_title, "content": entry_text, "mood": mood, "tags": tags}):
+                        st.success("✅ Journal entry saved!")
+            
+            st.subheader("📓 Recent Entries")
+            journals_df = journals_to_dataframe()
+            if not journals_df.empty:
+                 st.dataframe(journals_df.style.set_properties(**{"background-color": "#1A1C24", "color": "white"}), use_container_width=True)
+            else:
+                 st.info("No journal entries yet.")
+
+else:
+    st.markdown("<h1 style='text-align: center;'>Welcome to VolGuard Pro</h1>", unsafe_allow_html=True)
+    st.info("Please enter your Upstox Access Token in the sidebar to begin.")
+
