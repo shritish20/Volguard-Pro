@@ -588,7 +588,7 @@ def place_multi_leg_orders(config, orders):
                 "quantity": abs(order["quantity"]),
                 "product": "D",
                 "validity": "DAY",
-                "price": 0, # Fix: Set to 0 for MARKET orders
+                "price": 0, # CRITICAL FIX: Set to 0 for MARKET orders
                 "tag": f"volguard_{order['instrument_key'].split('|')[1][:10]}",
                 "instrument_token": order["instrument_key"],
                 "order_type": "MARKET",
@@ -599,15 +599,18 @@ def place_multi_leg_orders(config, orders):
                 "correlation_id": correlation_id
             })
         url = f"{config['base_url']}/order/multi/place"
-        res = requests.post(url, headers=config['headers'], json={"orders": payload})
+        
+        # CRITICAL FIX: The API expects the list directly, not a dict containing the list.
+        res = requests.post(url, headers=config['headers'], json=payload) 
+        
         if res.status_code == 200:
-            st.success(":white_check_mark: Multi-leg order placed successfully!")
+            st.success("✅ Multi-leg order placed successfully!")
             return True
         else:
-            st.error(f":x: Failed to place multi-leg order: {res.status_code} - {res.text}")
+            st.error(f"❌ Failed to place multi-leg order: {res.status_code} - {res.text}")
             return False
     except Exception as e:
-        st.error(f":warning: Error placing multi-leg order: {e}")
+        st.error(f"⚠️ Error placing multi-leg order: {e}")
         return False
 
 def create_gtt_order(config, instrument_token, trigger_price, transaction_type="SELL", tag="SL"):
@@ -1328,4 +1331,3 @@ if st.session_state.logged_in:
 else:
     st.markdown("<h1 style='text-align: center;'>Welcome to VolGuard Pro</h1>", unsafe_allow_html=True)
     st.info("Please enter your Upstox Access Token in the sidebar to begin.")
-
