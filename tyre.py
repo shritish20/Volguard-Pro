@@ -19,14 +19,6 @@ import base64
 from streamlit_autorefresh import st_autorefresh
 from arch import arch_model
 
-# --- GLOBAL CONFIGURATION ---
-# Moved this outside get_config to avoid duplicate key error
-if "expiry_type_selector" not in st.session_state:
-    st.session_state.expiry_type_selector = "Weekly"
-
-# Sidebar radio moved outside function
-expiry_type = st.sidebar.radio("📅 Choose Expiry Type", ["Weekly", "Monthly"], key="expiry_type_selector")
-
 # --- DATABASE SETUP (In Memory) ---
 Base = declarative_base()
 class TradeLog(Base):
@@ -157,6 +149,8 @@ if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
 if "access_token" not in st.session_state:
     st.session_state.access_token = ""
+if "expiry_type_selector" not in st.session_state:
+    st.session_state.expiry_type_selector = "Weekly"
 
 # --- ALL STRATEGIES ---
 all_strategies = [
@@ -164,8 +158,11 @@ all_strategies = [
     "Calendar Spread", "Bull Put Spread", "Wide Strangle", "ATM Strangle"
 ]
 
+# --- Sidebar Expiry Type Selection ---
+expiry_type = st.sidebar.radio("📅 Choose Expiry Type", ["Weekly", "Monthly"], key="expiry_type_selector")
+
 # --- Configuration ---
-def get_config(access_token, expiry_type):  # Now accepts expiry_type
+def get_config(access_token, expiry_type):
     config = {
         "access_token": access_token,
         "base_url": "https://api.upstox.com/v2",
@@ -198,7 +195,7 @@ def get_config(access_token, expiry_type):  # Now accepts expiry_type
         try:
             url = f"{config['base_url']}/option/contract"
             params = {"instrument_key": config["instrument_key"]}
-            res = requests.get(url, headers=config["headers"], params=params)
+            res = requests.get(url, headers=config['headers'], params=params)
             if res.status_code == 200:
                 df = pd.DataFrame(res.json()["data"])
                 df["expiry"] = pd.to_datetime(df["expiry"])
@@ -213,7 +210,7 @@ def get_config(access_token, expiry_type):  # Now accepts expiry_type
     # Fetch expiries
     weekly_exp, monthly_exp = get_expiries()
 
-    # Use passed expiry_type from sidebar
+    # Use expiry_type from sidebar
     expiry_date = None
     if expiry_type == "Weekly" and len(weekly_exp) > 0:
         expiry_date = weekly_exp.iloc[0].strftime("%Y-%m-%d")
@@ -556,10 +553,9 @@ def calculate_strategy_margin(config, strategy_details):
             elif isinstance(data, dict):
                 margins = data.get("margins", [])
                 if isinstance(margins, list):
-                    total_margin = sum(item.get("total_margin", 0) for item in margins)
-                else:
-                    total_margin = data.get("required_margin", 0) or data.get("final_margin", 0)
-            return round(total_margin, 2)
+                    total_margin = sum(item.get("total_margin", 0) for їй
+
+        return round(total_margin, 2)
         st.warning(f":warning: Failed to calculate margin: {res.status_code} - {res.text}")
         return 0
     except Exception as e:
@@ -576,10 +572,11 @@ def place_multi_leg_orders(config, orders):
                 "quantity": abs(order["quantity"]),
                 "product": "D",
                 "validity": "DAY",
+                "price": 0 if order["order_type"] == "MARKET" else order.get("current_price", 0),  # Fix: Set price to 0 for MARKET orders
                 "tag": f"{order['instrument_key']}_leg_{idx}",
                 "slice": False,
                 "instrument_token": order["instrument_key"],
-                "order_type": order["order_type"],  # Can be MARKET or LIMIT
+                "order_type": order.get("order_type", "MARKET"),
                 "transaction_type": order["transaction_type"],
                 "disclosed_quantity": 0,
                 "trigger_price": 0,
@@ -641,7 +638,7 @@ def get_strategy_details(strategy_name, option_chain, spot_price, config, ivp, l
         st.warning(f":warning: Strategy {strategy_name} not supported.")
         return None
     try:
-        detail = func_map[strategy_name](option_chain, spot_price, config, ivp, lots=lots)
+        detail = func_map[strategy_name](option_chain, spot_price, config, ivp, lots)
     except Exception as e:
         st.warning(f":warning: Error calculating {strategy_name} details: {e}")
         return None
@@ -1035,22 +1032,27 @@ def plot_greeks_separately(df):
         st.info("No option chain data to plot.")
         return
     fig, axs = plt.subplots(2, 2, figsize=(14, 10))
-
+    
     axs[0][0].bar(df["Strike"], df["Call IV"], label="Call IV", color="#1f77b4")
     axs[0][0].bar(df["Strike"], df["Put IV"], alpha=0.6, label="Put IV", color="#ff7f0e")
-    axs[0][0].legend(); axs[0][0].set_title("Call vs Put IV")
-
+    axs[0][0].legend()
+    axs[0][0].set_title("Call vs Put IV")
+    
     axs[0][1].bar(df["Strike"], df["Total Theta"], color="#2ca02c")
     axs[0][1].set_title("Total Theta")
-
+    
     axs[1][0].bar(df["Strike"], df["Total Vega"], color="#d62728")
     axs[1][0].set_title("Total Vega")
-
+    
     axs[1][1].bar(df["Strike"], df["Straddle Price"], color="#9467bd")
     axs[1][1].set_title("Straddle Price")
 
     for ax in axs.flatten():
         ax.grid(True, linestyle="--", alpha=0.3)
+        ax.tick_params(axis='x', colors='white')
+        ax.tick_params(axis='y', colors='white')
+        ax.set_facecolor('#0E1117')
+    fig.patch.set_facecolor('#0E1117')
     st.pyplot(fig)
 
 def plot_payoff(orders, spot_price, wing_width):
@@ -1074,27 +1076,33 @@ def plot_payoff(orders, spot_price, wing_width):
     st.pyplot(fig)
 
 # --- Streamlit UI Setup ---
-st.set_page_config(page_title="Volguard - Your Trading Copilot", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="VolGuard Pro", layout="wide", initial_sidebar_state="expanded")
 st_autorefresh(interval=2 * 60 * 1000, key="refresh")
 st.info("⏳ Auto-refreshing every 2 minutes to fetch updated market data.")
 st.markdown("""
 <style>
 .main { background-color: #0E1117; color: white; }
 .metric-box { 
-  background-color: #1A1C24; 
-  padding: 15px; 
-  border-radius: 8px; 
-  margin-bottom: 10px; 
+    background-color: #1A1C24; 
+    padding: 20px; 
+    border-radius: 12px; 
+    box-shadow: 0 0 8px rgba(0,0,0,0.3); 
+    margin-bottom: 10px; 
 }
 .metric-box h3 { 
-  color: #6495ED; 
-  font-size: 1em; 
-  margin-bottom: 5px; 
+    color: #00BFFF; 
+    font-size: 1em; 
+    margin: 0 0 10px 0; 
+}
+.metric-box h4 { 
+    color: #00BFFF; 
+    font-size: 0.9em; 
+    margin: 0 0 5px 0; 
 }
 .metric-box .value { 
-  font-size: 1.8em; 
-  font-weight: bold; 
-  color: #00BFFF; 
+    font-size: 2rem; 
+    font-weight: bold; 
+    color: white; 
 }
 /* Sidebar styling */
 section[data-testid="stSidebar"] > div:first-child {
@@ -1121,12 +1129,11 @@ section[data-testid="stSidebar"] label {
 }
 </style>""", unsafe_allow_html=True)
 
-# Sidebar logo/header
+# Sidebar login/logout
 st.sidebar.markdown("""
 🚀 **VolGuard**
 Your Options Copilot
 """)
-# Sidebar login/logout
 if 'access_token' not in st.session_state:
     st.session_state.access_token = ""
 if 'logged_in' not in st.session_state:
@@ -1194,12 +1201,15 @@ if st.session_state.logged_in and access_token:
         return (option_chain, spot_price, vix, nifty, seller, full_chain_df, market, ivp, hv_7, garch_7d, xgb_vol, iv_rv_spread, iv_skew_slope, regime_score, regime, regime_note, regime_explanation, event_df, strategies, strategy_rationale, event_warning, strategy_details, trades_df, strategy_df, portfolio_summary, funds_data, sharpe_ratio)
 
     (option_chain, spot_price, vix, nifty, seller, full_chain_df, market, ivp, hv_7, garch_7d, xgb_vol, iv_rv_spread, iv_skew_slope, regime_score, regime, regime_note, regime_explanation, event_df, strategies, strategy_rationale, event_warning, strategy_details, trades_df, strategy_df, portfolio_summary, funds_data, sharpe_ratio) = load_all_data(config)
-    
+
     if option_chain is None:
         st.stop()
 
     st.markdown("<h1 style='text-align: center;'>Market Insights Dashboard</h1>", unsafe_allow_html=True)
-
+    col1, col2, col3 = st.columns(3)
+    col1.metric("IV", f"{seller['avg_iv']:.2f}%")
+    col2.metric("IVP", f"{ivp}%")
+    col3.metric("Straddle", f"₹{seller['straddle_price']:.2f}")
     col1, col2, col3, col4 = st.columns(4)
     with col1:
         st.markdown(f"<div class='metric-box'><h3>Nifty 50 Spot</h3><div class='value'>₹{nifty:.2f}</div></div>", unsafe_allow_html=True)
@@ -1209,7 +1219,6 @@ if st.session_state.logged_in and access_token:
         st.markdown(f"<div class='metric-box'><h3>ATM Strike</h3><div class='value'>{seller['strike']:.0f}</div></div>", unsafe_allow_html=True)
     with col4:
         st.markdown(f"<div class='metric-box'><h3>Straddle Price</h3><div class='value'>₹{seller['straddle_price']:.2f}</div></div>", unsafe_allow_html=True)
-
     col5, col6, col7, col8 = st.columns(4)
     with col5:
         st.markdown(f"<div class='metric-box'><h3>ATM IV</h3><div class='value'>{seller['avg_iv']:.2f}%</div></div>", unsafe_allow_html=True)
@@ -1235,8 +1244,7 @@ if st.session_state.logged_in and access_token:
             "Feature": ["ATM_IV", "Realized_Vol", "IVP", "PCR", "VIX", "Days_to_Expiry", "GARCH_Predicted_Vol"],
             "Value": [seller["avg_iv"], hv_7, ivp, market["pcr"], vix, market["days_to_expiry"], garch_7d]
         })
-        styled = xgb_inputs.style.format({"Value": "{:.2f}"}).set_properties(**{"background-color": "#1A1C24", "color": "white"})
-        st.dataframe(styled, use_container_width=True)
+        st.dataframe(xgb_inputs.style.format({"Value": "{:.2f}"}).set_properties(**{"background-color": "#1A1C24", "color": "white"}), use_container_width=True)
         st.subheader("Breakeven & Max Pain")
         st.markdown(f"<div class='metric-box'><h4>Breakeven Range:</h4> {seller['strike'] - seller['straddle_price']:.0f} – {seller['strike'] + seller['straddle_price']:.0f}</div>", unsafe_allow_html=True)
         st.markdown(f"<div class='metric-box'><h4>Max Pain:</h4> {market['max_pain']:.0f}</div>", unsafe_allow_html=True)
@@ -1248,8 +1256,7 @@ if st.session_state.logged_in and access_token:
         st.markdown(f"<div class='metric-box'><h4>POP</h4>{seller['pop']:.2f}%</div>", unsafe_allow_html=True)
         st.subheader("Upcoming Events")
         if not event_df.empty:
-            styled = event_df.style.set_properties(**{'background-color': '#1A1C24', 'color': 'white'})
-            st.dataframe(styled, use_container_width=True)
+            st.dataframe(event_df.style.set_properties(**{'background-color': '#1A1C24', 'color': 'white'}), use_container_width=True)
             if event_warning:
                 st.warning(event_warning)
         else:
@@ -1258,214 +1265,175 @@ if st.session_state.logged_in and access_token:
     # OPTION CHAIN ANALYSIS TAB
     elif st.session_state.active_tab == "Option Chain Analysis":
         st.subheader("📊 Option Chain Analysis")
+
+        # Step 1: Let user override expiry
         all_expiries = sorted(set(pd.to_datetime([c["expiry"] for c in option_chain])))
         expiry_override = st.selectbox("Choose Expiry Date", [e.strftime("%Y-%m-%d") for e in all_expiries], index=0)
         filtered_chain = [c for c in option_chain if c["expiry"][:10] == expiry_override]
         chain_df = full_chain_table(filtered_chain, spot_price)
-        plot_greeks_separately(chain_df)
-        styled_df = chain_df.style.set_properties(**{
-            'background-color': '#1A1C24',
-            'color': 'white',
-            'border-color': 'gray'
-        })
-        st.dataframe(styled_df, use_container_width=True)
-        st.download_button("📥 Download Option Chain", chain_df.to_csv(index=False), file_name=f"option_chain_{expiry_override}.csv")
 
+        # Step 2: Plot greeks separately
+        if not chain_df.empty:
+            plot_greeks_separately(chain_df)
+
+        # Step 3: Show interactive filters for IV/OI
+        col1, col2 = st.columns(2)
+        with col1:
+            iv_min = st.slider("Min IV (either Call or Put)", 0.0, 100.0, 10.0)
+        with col2:
+            oi_min = st.slider("Min Total OI", 0, 1000000, 100000)
+
+        filtered_df = chain_df[(chain_df["Call IV"] >= iv_min) | (chain_df["Put IV"] >= iv_min)]
+        filtered_df = filtered_df[filtered_df["Total OI"] >= oi_min]
+
+        # Step 4: Display table with modern styling
+        if not filtered_df.empty:
+            styled_df = filtered_df.style.set_properties(**{
+                'background-color': '#1A1C24',
+                'color': 'white',
+                'border-color': 'gray'
+            })
+            st.dataframe(styled_df, use_container_width=True)
+
+            # Step 5: Display key rows as metric cards
+            st.subheader("Key Strikes")
+            for _, row in filtered_df.iterrows():
+                st.markdown(f"""
+                <div class='metric-box'>
+                    <h4>Strike: {row['Strike']}</h4>
+                    IV Skew: {row['IV Skew']:.2f} | Theta: {row['Total Theta']:.2f} | Vega: {row['Total Vega']:.2f}
+                </div>
+                """, unsafe_allow_html=True)
+
+        # Step 6: Download options
+        col1, col2 = st.columns(2)
+        with col1:
+            download_df(filtered_df, "option_chain.csv", "Download CSV")
+        with col2:
+            download_excel(filtered_df, "option_chain.xlsx", "Option Chain", "Download Excel")
     # STRATEGY SUGGESTIONS TAB
     elif st.session_state.active_tab == "Strategy Suggestions":
-        st.markdown(f"<div class='metric-box'><h3>Regime: {regime}</h3><p>Score: {regime_score:.2f}<br>{regime_note}<br><i>{regime_explanation}</i></p></div>", unsafe_allow_html=True)
-        st.subheader("Recommended Strategies")
-        if strategies:
-            st.success(f"**Suggested Strategies:** {', '.join(strategies)}")
-            st.info(f"**Rationale:** {strategy_rationale}")
-            if event_warning:
-                st.warning(event_warning)
-            for strat in strategies:
-                st.markdown(f"### {strat}")
-                detail = next((d for d in strategy_details if d["strategy"] == strat), None)
-                if detail:
-                    order_df = pd.DataFrame({
-                        "Instrument": [o["instrument_key"] for o in detail["orders"]],
-                        "Type": [o["transaction_type"] for o in detail["orders"]],
-                        "Quantity": [config["lot_size"] for _ in detail["orders"]],
-                        "Price": [o.get("current_price", 0) for o in detail["orders"]]
-                    })
-                    styled = order_df.style.set_properties(**{"background-color": "#1A1C24", "color": "white"})
-                    st.dataframe(styled, use_container_width=True)
-                    margin = calculate_strategy_margin(config, detail)
-                    st.markdown(f"<div class='metric-box'><h4>Estimated Margin Required</h4> ₹{margin:.2f}</div>", unsafe_allow_html=True)
-                    lots = st.number_input(f"Lots for {strat}", min_value=1, value=1, step=1, key=f"lots_{strat}")
-                    if st.button(f"Place {strat} Order", key=f"place_{strat}"):
-                        updated_detail = get_strategy_details(strat, option_chain, spot_price, config, ivp, lots=lots)
-                        if updated_detail:
-                            success = place_multi_leg_orders(config, updated_detail["orders"])
-                            if success:
-                                trade_data = {
-                                    "strategy": strat,
-                                    "instrument_token": "NIFTY",
-                                    "entry_price": sum([o.get("current_price", 0) * o["quantity"] for o in updated_detail["orders"]]) / updated_detail.get("premium", 1),
-                                    "quantity": updated_detail.get("premium_total", 1),
-                                    "realized_pnl": 0,
-                                    "status": "open",
-                                    "regime_score": regime_score,
-                                    "notes": f"Strategy: {strat}, Lots: {lots}"
-                                }
-                                log_trade(trade_data)
-                                st.success(f":white_check_mark: Placed {strat} order with {lots} lots!")
-                            else:
-                                st.error(f":x: Failed to place {strat} order.")
-                        else:
-                            st.error(f":x: Unable to generate order details for {strat}.")
-                else:
-                    st.error(f":x: No details found for {strat}.")
+        st.subheader("🔄 Strategy Suggestions")
+        st.markdown(f"<div class='metric-box'><h4>Volatility Regime:</h4> {regime} ({regime_score})</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='metric-box'><h4>Regime Note:</h4> {regime_note}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='metric-box'><h4>Explanation:</h4> {regime_explanation}</div>", unsafe_allow_html=True)
+        if event_warning:
+            st.warning(event_warning)
+        st.markdown(f"<div class='metric-box'><h4>Strategy Rationale:</h4> {strategy_rationale}</div>", unsafe_allow_html=True)
 
+        st.subheader("Recommended Strategies")
+        for strat in strategies:
+            st.markdown(f"**{strat}**")
+            detail = next((d for d in strategy_details if d["strategy"] == strat), None)
+            if detail:
+                margin = calculate_strategy_margin(config, detail)
+                premium_per_lot, total_premium = calculate_strategy_premium(detail["orders"], config["lot_size"])
+                st.markdown(f"""
+                <div class='metric-box'>
+                    <h4>Details for {strat}</h4>
+                    Strikes: {', '.join(map(str, detail['strikes']))}<br>
+                    Premium per Lot: ₹{premium_per_lot:.2f}<br>
+                    Total Premium: ₹{total_premium:.2f}<br>
+                    Margin Required: ₹{margin:.2f}<br>
+                    Max Loss: ₹{detail.get('max_loss', 'N/A'):.2f}<br>
+                    Max Profit: ₹{detail.get('max_profit', 'N/A'):.2f}
+                </div>
+                """, unsafe_allow_html=True)
+                plot_payoff(detail["orders"], spot_price, max(detail["strikes"]) - min(detail["strikes"]))
+                lots = st.number_input(f"Number of Lots for {strat}", min_value=1, max_value=10, value=1, key=f"lots_{strat}")
+                if st.button(f"Place {strat} Order", key=f"order_{strat}"):
+                    detail_lots = get_strategy_details(strat, option_chain, spot_price, config, ivp, lots=lots)
+                    if detail_lots:
+                        if place_multi_leg_orders(config, detail_lots["orders"]):
+                            trade_data = {
+                                "strategy": strat,
+                                "instrument_token": ",".join(o["instrument_key"] for o in detail_lots["orders"]),
+                                "entry_price": detail_lots["premium"],
+                                "exit_price": 0,
+                                "quantity": lots * config["lot_size"],
+                                "realized_pnl": 0,
+                                "unrealized_pnl": 0,
+                                "regime_score": regime_score
+                            }
+                            log_trade(trade_data)
     # RISK & PORTFOLIO TAB
     elif st.session_state.active_tab == "Risk & Portfolio":
-        st.subheader("Portfolio Summary")
-        col_p1, col_p2, col_p3, col_p4 = st.columns(4)
-        with col_p1:
-            st.markdown(f"<div class='metric-box'><h3>Available Capital</h3><div class='value'>₹{funds_data['available_margin']:.2f}</div></div>", unsafe_allow_html=True)
-        with col_p2:
-            st.markdown(f"<div class='metric-box'><h3>Used Margin</h3><div class='value'>₹{funds_data['used_margin']:.2f}</div></div>", unsafe_allow_html=True)
-        with col_p3:
-            st.markdown(f"<div class='metric-box'><h3>Exposure %</h3><div class='value'>{portfolio_summary.get('Exposure Percent', 0):.2f}%</div></div>", unsafe_allow_html=True)
-        with col_p4:
-            st.markdown(f"<div class='metric-box'><h3>Sharpe Ratio</h3><div class='value'>{sharpe_ratio:.2f}</div></div>", unsafe_allow_html=True)
-        st.subheader("Capital Allocation")
-        plot_allocation_pie(strategy_df, config)
-        st.subheader("Drawdown Trend")
-        plot_drawdown_trend(portfolio_summary)
-        st.subheader("Margin Utilization")
-        plot_margin_gauge(funds_data)
-        st.subheader("Strategy Risk Summary")
-        if not strategy_df.empty:
-            styled = strategy_df.style.set_properties(**{"background-color": "#1A1C24", "color": "white"})
-            st.dataframe(styled, use_container_width=True)
-            if portfolio_summary.get("Flags"):
-                st.warning(f":warning: Risk Alerts: {' | '.join(portfolio_summary['Flags'])}")
-        else:
-            st.info("No active strategies to display.")
+        st.subheader("📈 Risk & Portfolio Overview")
+        st.markdown(f"<div class='metric-box'><h4>Total Funds:</h4> ₹{portfolio_summary['Total Funds']:.2f}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='metric-box'><h4>Capital Deployed:</h4> ₹{portfolio_summary['Capital Deployed']:.2f} ({portfolio_summary['Exposure Percent']:.2f}%)</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='metric-box'><h4>Risk on Table:</h4> ₹{portfolio_summary['Risk on Table']:.2f} ({portfolio_summary['Risk Percent']:.2f}%)</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='metric-box'><h4>Realized P&L:</h4> ₹{portfolio_summary['Realized P&L']:.2f}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='metric-box'><h4>Drawdown:</h4> ₹{portfolio_summary['Drawdown ₹']:.2f} ({portfolio_summary['Drawdown Percent']:.2f}%)</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='metric-box'><h4>Max Drawdown Allowed:</h4> ₹{portfolio_summary['Max Drawdown Allowed']:.2f}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='metric-box'><h4>Sharpe Ratio:</h4> {sharpe_ratio:.2f}</div>", unsafe_allow_html=True)
+        if portfolio_summary["Flags"]:
+            st.warning("🚨 Risk Flags: " + "; ".join(portfolio_summary["Flags"]))
 
+        st.subheader("Strategy Allocation")
+        plot_allocation_pie(strategy_df, config)
+        st.dataframe(strategy_df.style.set_properties(**{'background-color': '#1A1C24', 'color': 'white'}), use_container_width=True)
+        plot_drawdown_trend(portfolio_summary)
+        plot_margin_gauge(funds_data)
     # MANUAL ORDERS TAB
     elif st.session_state.active_tab == "Manual Orders":
-        st.subheader("📥 Manual Multi-Leg Order Placement")
-        selected_strategy = st.selectbox("Select Strategy", all_strategies, key="manual_strategy")
-        lots = st.number_input("Number of Lots", min_value=1, value=1, step=1, key="manual_lots")
-        sl_percentage = st.slider("Stop Loss %", 0.0, 50.0, 10.0, 0.5, key="manual_sl_pct")
-        order_type = st.radio("Order Type", ["MARKET", "LIMIT"], horizontal=True)
-        validity = st.radio("Order Validity", ["DAY", "IOC"], horizontal=True)
-        if selected_strategy:
-            detail = get_strategy_details(selected_strategy, option_chain, spot_price, config, ivp, lots=lots)
-            if detail:
-                st.write("🧮 Strategy Legs (Editable)")
-                updated_orders = []
-                for idx, order in enumerate(detail["orders"]):
-                    col1, col2, col3, col4, col5 = st.columns(5)
-                    with col1:
-                        st.markdown(f"**Leg {idx + 1}**")
-                    with col2:
-                        qty = st.number_input(f"Qty {idx+1}", min_value=1, value=order["quantity"], step=1, key=f"qty_{idx}")
-                    with col3:
-                        tx_type = st.selectbox(f"Type {idx+1}", ["BUY", "SELL"], index=0 if order["transaction_type"] == "BUY" else 1, key=f"tx_{idx}")
-                    with col4:
-                        price = st.number_input(f"Price {idx+1}", min_value=0.0, value=order.get("current_price", 0.0), step=0.05, key=f"price_{idx}")
-                    with col5:
-                        instr = order["instrument_key"]
-                        st.code(instr, language="text")
-                    updated_orders.append({
-                        "instrument_key": instr,
-                        "quantity": qty,
-                        "transaction_type": tx_type,
-                        "order_type": order_type,
-                        "validity": validity,
-                        "product": "D",
-                        "current_price": price
-                    })
-                st.markdown("---")
-                margin = calculate_strategy_margin(config, detail) * lots
-                st.markdown(f"💰 **Estimated Margin:** ₹{margin:,.2f}")
-                st.markdown(f"💵 **Premium Collected:** ₹{detail['premium_total'] * lots:,.2f}")
-                st.markdown(f"🔻 **Max Loss:** ₹{detail['max_loss'] * lots:,.2f}")
-                st.markdown(f"🟢 **Max Profit:** ₹{detail['max_profit'] * lots:,.2f}")
-                if st.button("🚀 Place Multi-Leg Order"):
-                    payload = []
-                    for idx, leg in enumerate(updated_orders):
-                        correlation_id = f"mleg_{idx}_{int(time()) % 100000}"
-                        payload.append({
-                            "quantity": leg["quantity"],
-                            "product": "D",
-                            "validity": leg["validity"],
-                            "tag": f"{leg['instrument_key']}_leg_{idx}",
-                            "slice": False,
-                            "instrument_token": leg["instrument_key"],
-                            "order_type": leg["order_type"],
-                            "transaction_type": leg["transaction_type"],
-                            "disclosed_quantity": 0,
-                            "trigger_price": 0,
-                            "is_amo": False,
-                            "correlation_id": correlation_id
-                        })
-                    url = f"{config['base_url']}/order/multi/place"
-                    res = requests.post(url, headers=config['headers'], json=payload)
-                    if res.status_code == 200:
-                        st.success("✅ Multi-leg order placed successfully!")
-                        # Place SL orders for each SELL leg
-                        for leg in updated_orders:
-                            if leg["transaction_type"] == "SELL":
-                                sl_price = leg["current_price"] * (1 + sl_percentage / 100)
-                                create_gtt_order(config, leg["instrument_key"], sl_price, "BUY", tag=f"SL_{selected_strategy}")
-                        st.success(f"🛡️ SL orders placed at {sl_percentage}% above sell price.")
-                    else:
-                        st.error(f"❌ Failed to place order: {res.status_code} - {res.text}")
-        else:
-            st.error(":x: Unable to generate order details.")
-
-    # LOGS & JOURNAL TAB
-    elif st.session_state.active_tab == "Logs & Journal":
-        st.header("📁 Logs & Journal")
-        tab_logs, tab_journal = st.tabs([" Trades", " Journal"])
-        with tab_logs:
-            st.subheader("📊 Trade Logs")
-            trades_df = trades_to_dataframe()
-            if not trades_df.empty:
-                styled = trades_df.style.set_properties(**{"background-color": "#1A1C24", "color": "white"})
-                st.dataframe(styled, use_container_width=True)
-                col1, col2 = st.columns(2)
-                with col1:
-                    download_df(trades_df, "trades.csv", "📥 Download CSV")
-                with col2:
-                    download_excel(trades_df, "trades.xlsx", sheet_name="Trades", button_label="📥 Download Excel")
-            else:
-                st.info("No trade logs found.")
-        with tab_journal:
-            st.subheader("📝 Trading Journal")
-            with st.form("journal_form"):
-                entry_title = st.text_input("Entry Title")
-                entry_text = st.text_area("Journal Entry")
-                mood = st.selectbox("Mood", ["😄 Happy", "😌 Calm", "😰 Stressed", "😤 Angry", "😴 Tired"])
-                tags = st.text_input("Tags (comma-separated)")
-                submit_journal = st.form_submit_button("Save Entry")
-            if submit_journal and entry_text:
-                journal_data = {
-                    "title": entry_title,
-                    "content": entry_text,
-                    "mood": mood,
-                    "tags": tags
+        st.subheader("🛠️ Manual Order Placement")
+        instrument_key = st.text_input("Instrument Key (e.g., NSE_FO|123456)")
+        quantity = st.number_input("Quantity", min_value=1, value=config["lot_size"])
+        transaction_type = st.selectbox("Transaction Type", ["BUY", "SELL"])
+        order_type = st.selectbox("Order Type", ["MARKET", "LIMIT"])
+        price = st.number_input("Price (0 for MARKET)", min_value=0.0, value=0.0)
+        trigger_price = st.number_input("GTT Trigger Price", min_value=0.0, value=0.0)
+        if st.button("Place Manual Order"):
+            order = [{
+                "instrument_key": instrument_key,
+                "quantity": quantity,
+                "transaction_type": transaction_type,
+                "order_type": order_type,
+                "current_price": price
+            }]
+            if place_multi_leg_orders(config, order):
+                if trigger_price > 0:
+                    create_gtt_order(config, instrument_key, trigger_price, "SELL" if transaction_type == "BUY" else "BUY")
+                trade_data = {
+                    "strategy": "Manual",
+                    "instrument_token": instrument_key,
+                    "entry_price": price,
+                    "exit_price": 0,
+                    "quantity": quantity,
+                    "realized_pnl": 0,
+                    "unrealized_pnl": 0,
+                    "regime_score": regime_score
                 }
-                if add_journal_entry(journal_data):
-                    st.success("✅ Journal entry saved!")
-            journals_df = journals_to_dataframe()
-            if not journals_df.empty:
-                styled = journals_df[["Timestamp", "Title", "Mood", "Tags"]].style.set_properties(**{"background-color": "#1A1C24", "color": "white"})
-                st.dataframe(styled, use_container_width=True)
-                col1, col2 = st.columns(2)
-                with col1:
-                    download_df(journals_df, "journals.csv", "📥 Download CSV")
-                with col2:
-                    download_excel(journals_df, "journals.xlsx", sheet_name="Journals", button_label="📥 Download Excel")
-            else:
-                st.info("No journal entries yet.")
+                log_trade(trade_data)
 
-else:
-    st.markdown("<h1 style='text-align: center;'>Volguard - Your Trading Copilot</h1>", unsafe_allow_html=True)
-    st.info("Please enter your Upstox Access Token in the sidebar to access the dashboard.")
+     # LOGS & JOURNAL TAB
+    elif st.session_state.active_tab == "Logs & Journal":
+        st.subheader("📝 Trade Logs")
+        trades_df_display = trades_to_dataframe()
+        if not trades_df_display.empty:
+            st.dataframe(trades_df_display.style.set_properties(**{'background-color': '#1A1C24', 'color': 'white'}), use_container_width=True)
+            download_df(trades_df_display, "trade_logs.csv", "Download Trade Logs")
+        else:
+            st.info("No trades logged.")
+
+        st.subheader("📓 Trading Journal")
+        journal_title = st.text_input("Journal Entry Title")
+        journal_content = st.text_area("Journal Entry Content")
+        journal_mood = st.selectbox("Mood", ["Positive", "Neutral", "Negative"])
+        journal_tags = st.text_input("Tags (comma-separated)")
+        if st.button("Add Journal Entry"):
+            if journal_title and journal_content:
+                entry_data = {
+                    "title": journal_title,
+                    "content": journal_content,
+                    "mood": journal_mood,
+                    "tags": journal_tags
+                }
+                if add_journal_entry(entry_data):
+                    st.success(":white_check_mark: Journal entry added!")
+        journal_df = journals_to_dataframe()
+        if not journal_df.empty:
+            st.dataframe(journal_df.style.set_properties(**{'background-color': '#1A1C24', 'color': 'white'}), use_container_width=True)
+            download_df(journal_df, "journal_entries.csv", "Download Journal Entries")
+        else:
+            st.info("No journal entries.")   
