@@ -553,7 +553,7 @@ def calculate_strategy_margin(config, strategy_details):
             elif isinstance(data, dict):
                 margins = data.get("margins", [])
                 if isinstance(margins, list):
-                    total_margin = sum(item.get("total_margin", 0) for їй
+                    total_margin = sum(item.get("total_margin", 0)) for їй
 
         return round(total_margin, 2)
         st.warning(f":warning: Failed to calculate margin: {res.status_code} - {res.text}")
